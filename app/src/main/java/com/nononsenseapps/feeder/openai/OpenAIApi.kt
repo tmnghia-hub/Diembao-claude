@@ -19,6 +19,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.jsoup.Jsoup
 import java.util.concurrent.TimeUnit
 
 class OpenAIApi(
@@ -250,30 +251,93 @@ class OpenAIApi(
         preserveHtml: Boolean,
     ): TranslationResult =
         try {
-            val response =
-                openAIClientFactory(settings).chatCompletion(
-                    request = translationRequest(content, targetLanguage, settings, preserveHtml),
-                    requestOptions = null,
-                )
-            val text =
-                response.choices
-                    .firstOrNull()
-                    ?.message
-                    ?.content
-                    ?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("Response content is null")
-            val (lang, translated) = parseTranslationResponse(text)
-            if (translated.isBlank()) {
-                throw IllegalStateException("Response content is empty")
-            }
+            var detectedLanguage = ""
+            // Long articles are translated piece by piece so the model never runs out of output
+            val translatedChunks =
+                splitForTranslation(content, preserveHtml).map { chunk ->
+                    val (lang, translated) =
+                        translateChunkWithLlm(
+                            settings = settings,
+                            content = chunk,
+                            targetLanguage = targetLanguage,
+                            preserveHtml = preserveHtml,
+                        )
+                    if (detectedLanguage.isBlank()) {
+                        detectedLanguage = lang
+                    }
+                    translated
+                }
             TranslationResult.Success(
-                content = translated,
-                detectedLanguage = lang,
+                content = translatedChunks.joinToString(separator = if (preserveHtml) "\n" else "\n\n"),
+                detectedLanguage = detectedLanguage,
                 provider = settings.translationProviderKey,
             )
         } catch (e: Exception) {
             TranslationResult.Error(content = e.message ?: e.cause?.message ?: "AI translation failed")
         }
+
+    private suspend fun translateChunkWithLlm(
+        settings: OpenAISettings,
+        content: String,
+        targetLanguage: String,
+        preserveHtml: Boolean,
+    ): Pair<String, String> {
+        val response =
+            openAIClientFactory(settings).chatCompletion(
+                request = translationRequest(content, targetLanguage, settings, preserveHtml),
+                requestOptions = null,
+            )
+        val text =
+            response.choices
+                .firstOrNull()
+                ?.message
+                ?.content
+                ?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("Response content is null")
+        val (lang, translated) = parseTranslationResponse(text)
+        if (translated.isBlank()) {
+            throw IllegalStateException("Response content is empty")
+        }
+        return lang to translated
+    }
+
+    private fun splitForTranslation(
+        content: String,
+        preserveHtml: Boolean,
+    ): List<String> {
+        if (content.length <= MAX_LLM_CHUNK_CHARS) {
+            return listOf(content)
+        }
+
+        val pieces =
+            if (preserveHtml) {
+                Jsoup
+                    .parseBodyFragment(content)
+                    .body()
+                    .childNodes()
+                    .map { it.outerHtml() }
+            } else {
+                content.split("\n\n")
+            }.filter { it.isNotBlank() }
+        val separator = if (preserveHtml) "\n" else "\n\n"
+
+        val chunks = mutableListOf<String>()
+        val current = StringBuilder()
+        for (piece in pieces) {
+            if (current.isNotEmpty() && current.length + piece.length > MAX_LLM_CHUNK_CHARS) {
+                chunks.add(current.toString())
+                current.clear()
+            }
+            if (current.isNotEmpty()) {
+                current.append(separator)
+            }
+            current.append(piece)
+        }
+        if (current.isNotEmpty()) {
+            chunks.add(current.toString())
+        }
+        return chunks.ifEmpty { listOf(content) }
+    }
 
     private fun parseTranslationResponse(text: String): Pair<String, String> {
         val trimmed = text.trim()
@@ -309,15 +373,26 @@ class OpenAIApi(
                         role = ChatRole.System,
                         messageContent =
                             TextContent(
-                                listOf(
-                                    "You are a professional translator inside an RSS reader app.",
+                                listOfNotNull(
+                                    "You are a professional news translator working for a newspaper.",
                                     "Translate the user's text into the language '$targetLanguage'.",
+                                    "Write natural, fluent editorial prose the way a native-speaking journalist would, not word for word.",
+                                    "Keep the meaning, tone and facts exactly. Never add, omit or explain anything.",
+                                    "Keep people, places, organisations, brands, numbers, dates, units and quotations accurate.",
+                                    "Keep names in their original form unless a widely used translated form exists.",
+                                    "Use consistent terminology throughout the text.",
+                                    if (targetLanguage.trim().startsWith("vi", ignoreCase = true)) {
+                                        "For Vietnamese use standard modern newspaper style with correct diacritics, and use established Vietnamese terms for common concepts."
+                                    } else {
+                                        null
+                                    },
                                     if (preserveHtml) {
-                                        "The text is HTML. Keep every HTML tag, attribute, URL and the document structure exactly as it is; translate only the human readable text."
+                                        "The text is HTML. Keep every HTML tag, attribute, URL and the document structure exactly as it is; " +
+                                            "translate only the human readable text. Never translate code."
                                     } else {
                                         "The text is plain text. Keep the line breaks."
                                     },
-                                    "Do not summarize, explain or add notes. Output only the translation.",
+                                    "Output only the translation.",
                                     "The first line of your answer must be exactly: Lang: \"ISO code\" (the detected source language) with NO markdown formatting.",
                                     "The translation starts on the next line.",
                                 ).joinToString(separator = " "),
@@ -629,6 +704,8 @@ private fun OpenAISettings.normalizedDeepLBaseUrl(): String {
 }
 
 const val LOCAL_TRANSLATION_PROVIDER_URL = "local://translation"
+
+private const val MAX_LLM_CHUNK_CHARS = 6000
 
 const val TRANSLATION_PROVIDER_OFFLINE = "offline"
 const val TRANSLATION_PROVIDER_DEEPL = "deepl"

@@ -18,3 +18,8 @@ File chính: `openai/OpenAIApi.kt`, `model/TranslationManager.kt`, `archmodel/Se
 - `ui/compose/feed/FlatNewsCard.kt`: item phẳng ngăn cách bằng đường kẻ mảnh.
 - Kiểu "Thẻ" (CARD): bài đầu là tin chính cỡ lớn, các bài sau là hàng gọn có ảnh nhỏ bên phải.
 - Màu động (Material You) mặc định tắt để thấy bảng màu NYT (bật lại trong Cài đặt).
+
+## Chất lượng dịch bằng AI (cập nhật)
+- Prompt dịch kiểu biên tập viên báo chí, có hướng dẫn riêng cho tiếng Việt.
+- Bài dài được chia đoạn (~6000 ký tự) để model không bị cắt cụt.
+- Bản dịch dự phòng ngoại tuyến không bị lưu cache như bản dịch của API, nên lần mở sau sẽ thử lại API.

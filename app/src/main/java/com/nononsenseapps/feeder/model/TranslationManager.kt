@@ -242,7 +242,15 @@ class TranslationManager(
                         },
                 )
 
-            if (updatedCache != cache) {
+            // A fallback translation must not be remembered as if the API had produced it,
+            // otherwise the better translation would never be retried
+            val usedOfflineFallback =
+                !settings.isLocalTranslation &&
+                    (
+                        translatedSnippetResult?.provider == TRANSLATION_PROVIDER_OFFLINE ||
+                            translatedTitleResult?.provider == TRANSLATION_PROVIDER_OFFLINE
+                    )
+            if (updatedCache != cache && !usedOfflineFallback) {
                 saveCache(
                     item.id,
                     settings,
@@ -376,7 +384,11 @@ class TranslationManager(
                     translatedFullArticleHtml = if (isFullText) translatedHtml else cache.translatedFullArticleHtml,
                 )
 
-            saveCache(itemId, settings, targetLanguage, updatedCache)
+            // A fallback translation must not be remembered as if the API had produced it,
+            // otherwise the better translation would never be retried
+            if (settings.isLocalTranslation || translatedBy != TRANSLATION_PROVIDER_OFFLINE) {
+                saveCache(itemId, settings, targetLanguage, updatedCache)
+            }
 
             ArticleTranslation(
                 translatedTitle = translatedTitle,
