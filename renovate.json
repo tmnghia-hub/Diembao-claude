@@ -1,0 +1,45 @@
+{
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "extends": [
+        "config:recommended",
+        ":semanticCommitTypeAll(chore)"
+    ],
+    "rebaseWhen": "conflicted",
+    "minimumReleaseAge": "14 days",
+    "minimumReleaseAgeBuffer": "3 days",
+    "platformAutomerge": true,
+    "packageRules": [
+        {
+            "matchUpdateTypes": ["patch"],
+            "automerge": true
+        },
+        {
+            "groupName": "compiler",
+            "matchPackageNames": [
+                "/^org.jetbrains.kotlin/",
+                "/^org.jetbrains.kotlin.jvm/",
+                "/^com.google.devtools.ksp/",
+                "/^androidx.compose.compiler/",
+                "/^com.android.application/"
+            ]
+        },
+        {
+            "groupName": "emoji2",
+            "matchPackageNames": [
+                "/^androidx.emoji2/"
+            ]
+        },
+        {
+            "groupName": "androidx.test",
+            "matchPackageNames": [
+                "/^androidx.test/"
+            ]
+        },
+        {
+            "groupName": "kodein di",
+            "matchPackageNames": [
+                "/^org.kodein.di/"
+            ]
+        }
+    ]
+}

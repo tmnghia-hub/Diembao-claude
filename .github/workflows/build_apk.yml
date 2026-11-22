@@ -1,0 +1,45 @@
+name: Build APK
+
+# Chạy thủ công: tab Actions -> "Build APK" -> Run workflow
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: setup JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: "25"
+          distribution: "temurin"
+
+      - name: gradle setup
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: make gradlew executable
+        run: chmod +x ./gradlew
+
+      # Chỉ để xem lỗi định dạng code, không chặn việc build APK
+      - name: ktlint (không bắt buộc)
+        continue-on-error: true
+        run: ./gradlew ktlintCheck
+
+      - name: build debug apk
+        run: ./gradlew assembleFdroidDebug
+
+      - name: upload apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: diembao-apk
+          retention-days: 30
+          path: app/build/outputs/apk/fdroid/debug/*.apk

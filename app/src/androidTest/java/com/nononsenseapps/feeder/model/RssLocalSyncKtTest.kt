@@ -1,0 +1,1277 @@
+package com.nononsenseapps.feeder.model
+
+import android.content.Context
+import android.content.SharedPreferences
+import androidx.test.core.app.ApplicationProvider.getApplicationContext
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.MediumTest
+import com.nononsenseapps.feeder.ApplicationCoroutineScope
+import com.nononsenseapps.feeder.FeederApplication
+import com.nononsenseapps.feeder.archmodel.FeedItemStore
+import com.nononsenseapps.feeder.archmodel.FeedStore
+import com.nononsenseapps.feeder.archmodel.FontStore
+import com.nononsenseapps.feeder.archmodel.Repository
+import com.nononsenseapps.feeder.archmodel.SessionStore
+import com.nononsenseapps.feeder.archmodel.SettingsStore
+import com.nononsenseapps.feeder.archmodel.SyncRemoteStore
+import com.nononsenseapps.feeder.blob.blobFile
+import com.nononsenseapps.feeder.blob.blobInputStream
+import com.nononsenseapps.feeder.db.room.AppDatabase
+import com.nononsenseapps.feeder.db.room.BlocklistDao
+import com.nononsenseapps.feeder.db.room.Feed
+import com.nononsenseapps.feeder.db.room.FeedDao
+import com.nononsenseapps.feeder.db.room.FeedItem
+import com.nononsenseapps.feeder.db.room.FeedItemDao
+import com.nononsenseapps.feeder.db.room.ID_UNSET
+import com.nononsenseapps.feeder.db.room.ReadStatusSyncedDao
+import com.nononsenseapps.feeder.db.room.RemoteReadMark
+import com.nononsenseapps.feeder.db.room.RemoteReadMarkDao
+import com.nononsenseapps.feeder.db.room.SyncRemote
+import com.nononsenseapps.feeder.db.room.SyncRemoteDao
+import com.nononsenseapps.feeder.di.networkModule
+import com.nononsenseapps.feeder.model.Feeds.Companion.RSS_WITH_DUPLICATE_GUIDS
+import com.nononsenseapps.feeder.model.Feeds.Companion.cowboyAtom
+import com.nononsenseapps.feeder.model.Feeds.Companion.cowboyDeletedMiddleAtom
+import com.nononsenseapps.feeder.model.Feeds.Companion.cowboyJson
+import com.nononsenseapps.feeder.model.Feeds.Companion.nixosRss
+import com.nononsenseapps.feeder.ui.TestDatabaseRule
+import com.nononsenseapps.feeder.util.DoNotUseInProd
+import com.nononsenseapps.feeder.util.FilePathProvider
+import com.nononsenseapps.feeder.util.filePathProvider
+import com.nononsenseapps.feeder.util.minusMinutes
+import com.nononsenseapps.jsonfeed.cachingHttpClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Ignore
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.kodein.di.DI
+import org.kodein.di.DIAware
+import org.kodein.di.bind
+import org.kodein.di.instance
+import org.kodein.di.singleton
+import java.net.InetAddress
+import java.net.URL
+import java.time.Instant
+import java.util.concurrent.TimeUnit
+import kotlin.test.assertTrue
+
+@OptIn(DoNotUseInProd::class)
+@RunWith(AndroidJUnit4::class)
+@MediumTest
+class RssLocalSyncKtTest : DIAware {
+    @get:Rule
+    val testDb = TestDatabaseRule(getApplicationContext())
+
+    @get:Rule
+    val testFiles = TemporaryFolder()
+
+    override val di by DI.lazy {
+        bind<AppDatabase>() with instance(testDb.db)
+        bind<FeedDao>() with singleton { testDb.db.feedDao() }
+        bind<FeedItemDao>() with singleton { testDb.db.feedItemDao() }
+        bind<BlocklistDao>() with singleton { testDb.db.blocklistDao() }
+        bind<RemoteReadMarkDao>() with singleton { testDb.db.remoteReadMarkDao() }
+        bind<ReadStatusSyncedDao>() with singleton { testDb.db.readStatusSyncedDao() }
+        bind<SyncRemoteDao>() with singleton { testDb.db.syncRemoteDao() }
+        bind<FeedStore>() with singleton { FeedStore(di) }
+        bind<FeedItemStore>() with singleton { FeedItemStore(di) }
+        bind<SettingsStore>() with
+            singleton {
+                SettingsStore(di).also {
+                    it.setAddedFeederNews(true)
+                }
+            }
+        bind<FontStore>() with singleton { FontStore(di) }
+        bind<SessionStore>() with singleton { SessionStore() }
+        bind<SyncRemoteStore>() with singleton { SyncRemoteStore(di) }
+        bind<OkHttpClient>() with singleton { cachingHttpClient() }
+        import(networkModule)
+        bind<SharedPreferences>() with
+            singleton {
+                getApplicationContext<FeederApplication>().getSharedPreferences(
+                    "test",
+                    Context.MODE_PRIVATE,
+                )
+            }
+        bind<ApplicationCoroutineScope>() with singleton { ApplicationCoroutineScope() }
+        bind<Repository>() with singleton { Repository(di) }
+        bind<FilePathProvider>() with
+            singleton {
+                filePathProvider(
+                    cacheDir = testFiles.newFolder("cache"),
+                    filesDir = testFiles.newFolder("files"),
+                )
+            }
+    }
+
+    private val server = MockWebServer()
+
+    val responses = mutableMapOf<URL?, MockResponse>()
+
+    private val rssLocalSync: RssLocalSync by instance()
+    private val settingsStore: SettingsStore by instance()
+    private val filePaths: FilePathProvider by instance()
+
+    @After
+    fun stopServer() {
+        server.shutdown()
+    }
+
+    @Before
+    fun setup() {
+        server.start(InetAddress.getByName("127.0.0.1"), 0)
+        settingsStore.setCurrentArticle(ID_UNSET)
+    }
+
+    private suspend fun insertFeed(
+        title: String,
+        url: URL,
+        raw: String,
+        isJson: Boolean = true,
+        useAlternateId: Boolean = false,
+        skipDuplicates: Boolean = false,
+        blockRules: String = "",
+        allowRules: String = "",
+    ): Long {
+        val id =
+            testDb.db.feedDao().insertFeed(
+                Feed(
+                    title = title,
+                    url = url,
+                    tag = "",
+                    alternateId = useAlternateId,
+                    skipDuplicates = skipDuplicates,
+                    blockRules = blockRules,
+                    allowRules = allowRules,
+                ),
+            )
+
+        server.dispatcher =
+            object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse =
+                    responses.getOrDefault(
+                        request.requestUrl?.toUrl(),
+                        MockResponse().setResponseCode(404),
+                    )
+            }
+
+        responses[url] =
+            MockResponse().apply {
+                setResponseCode(200)
+                if (isJson) {
+                    setHeader("Content-Type", "application/json")
+                } else {
+                    setHeader("Content-Type", "application/xml")
+                }
+                setBody(raw)
+            }
+
+        return id
+    }
+
+    @Test
+    fun cancellingRefreshClearsFeedStateAndAllowsAnotherRefresh() =
+        runBlocking {
+            val url = server.url("/cancel.json").toUrl()
+            val feedId = insertFeed("cancel", url, cowboyJson)
+            responses[url]!!.throttleBody(1, 1, TimeUnit.SECONDS)
+            val refresh = async(Dispatchers.Default) { rssLocalSync.syncFeeds(feedId = feedId) }
+            assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+            assertTrue(
+                testDb.db
+                    .feedDao()
+                    .getFeed(feedId)!!
+                    .currentlySyncing,
+            )
+            withTimeout(2_000) { refresh.cancelAndJoin() }
+            assertEquals(
+                false,
+                testDb.db
+                    .feedDao()
+                    .getFeed(feedId)!!
+                    .currentlySyncing,
+            )
+
+            responses[url] = MockResponse().setHeader("Content-Type", "application/json").setBody(cowboyJson)
+            withTimeout(5_000) {
+                assertTrue(rssLocalSync.syncFeeds(feedId = feedId, debugReallyForceNetwork = true))
+            }
+            assertEquals(
+                10,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+                    .size,
+            )
+        }
+
+    @Test
+    fun unchangedArticlesKeepTheirFilesAndChangedOrMissingContentIsSaved() =
+        runBlocking {
+            val prefix = "same ".repeat(6_000)
+            val originalText = prefix + "first"
+            val updatedText = prefix + "other"
+
+            fun feed(text: String) =
+                """
+                {"version":"https://jsonfeed.org/version/1","title":"Test",
+                 "icon":"https://example.com/icon.png",
+                 "items":[{"id":"article","title":"Title","url":"https://example.com/article",
+                           "date_published":"2020-01-01T00:00:00Z","content_text":"$text"}]}
+                """.trimIndent()
+
+            val url = server.url("/content.json").toUrl()
+            val feedId = insertFeed("content", url, feed(originalText))
+
+            suspend fun refresh() = rssLocalSync.syncFeeds(feedId = feedId, debugReallyForceNetwork = true)
+            assertTrue(refresh())
+            val dao = testDb.db.feedItemDao()
+            val item =
+                dao.loadFeedItemsInFeedDescDoNotUseInProd(feedId).single().copy(
+                    bookmarked = true,
+                    notified = true,
+                    readTime = Instant.ofEpochMilli(1_600_000_000_000L),
+                    fullTextDownloaded = true,
+                )
+            dao.updateFeedItem(item)
+            val file = blobFile(item.id, filePaths.articleDir)
+            assertTrue(file.setLastModified(1_600_000_000_000L))
+            val modified = file.lastModified()
+
+            assertTrue(refresh())
+            assertEquals(modified, file.lastModified())
+            assertEquals(item, dao.loadFeedItem(item.id))
+
+            // The changed text has the same snippet and word count, so metadata alone cannot detect it.
+            responses[url]!!.setBody(feed(updatedText))
+            assertTrue(refresh())
+
+            fun savedText() = blobInputStream(item.id, filePaths.articleDir).bufferedReader().use { it.readText() }
+            assertEquals(updatedText, savedText())
+            assertEquals(item, dao.loadFeedItem(item.id))
+
+            assertTrue(file.delete())
+            assertTrue(refresh())
+            assertEquals(updatedText, savedText())
+            file.writeText("broken gzip")
+            assertTrue(refresh())
+            assertEquals(updatedText, savedText())
+        }
+
+    @Test
+    fun slowResponseBodyDoesNotHoldUpOtherHosts() =
+        runBlocking {
+            // Distinct loopback hosts exercise global concurrency without bypassing the per-host limit.
+            val slowUrl =
+                server
+                    .url("/slow.json")
+                    .newBuilder()
+                    .host("127.0.0.1")
+                    .build()
+                    .toUrl()
+            val slowId = insertFeed("a-slow", slowUrl, cowboyJson)
+            val fastUrl =
+                server
+                    .url("/fast.json")
+                    .newBuilder()
+                    .host("localhost")
+                    .build()
+                    .toUrl()
+            val fastId = insertFeed("z-fast", fastUrl, cowboyJson)
+            responses[slowUrl]!!.setBodyDelay(5, TimeUnit.SECONDS)
+
+            val refresh = async { rssLocalSync.syncFeeds() }
+            withTimeout(4_000) {
+                while (testDb.db
+                        .feedItemDao()
+                        .loadFeedItemsInFeedDescDoNotUseInProd(fastId)
+                        .isEmpty()
+                ) {
+                    delay(20)
+                }
+            }
+            assertTrue(
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(slowId)
+                    .isEmpty(),
+            )
+            assertTrue(refresh.await())
+            assertEquals(
+                10,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(slowId)
+                    .size,
+            )
+        }
+
+    @Test
+    fun batchedLookupPreservesStateAndScopesToFeedAcrossSqliteChunks() =
+        runBlocking {
+            val firstFeed = insertFeed("first", server.url("/first").toUrl(), cowboyJson)
+            val secondFeed = insertFeed("second", server.url("/second").toUrl(), cowboyJson)
+            val readTime = Instant.now()
+            val item =
+                FeedItem(
+                    feedId = firstFeed,
+                    guid = "guid-1000",
+                    bookmarked = true,
+                    readTime = readTime,
+                    notified = true,
+                    fullTextDownloaded = true,
+                )
+            testDb.db.feedItemDao().insertFeedItem(item)
+            testDb.db.feedItemDao().insertFeedItem(FeedItem(feedId = secondFeed, guid = item.guid))
+
+            val repository: Repository by instance()
+            val loaded = repository.loadFeedItems(firstFeed, (0..1000).map { "guid-$it" }).single()
+            assertEquals(firstFeed, loaded.feedId)
+            assertEquals(readTime.toEpochMilli(), loaded.readTime?.toEpochMilli())
+            assertTrue(loaded.bookmarked)
+            assertTrue(loaded.notified)
+            assertTrue(loaded.fullTextDownloaded)
+            assertTrue(repository.loadFeedItems(firstFeed, emptyList()).isEmpty())
+        }
+
+    @Test
+    fun syncCowboyJsonWorks() =
+        runBlocking {
+            val cowboyJsonId =
+                insertFeed(
+                    "cowboyjson",
+                    server.url("/feed.json").toUrl(),
+                    cowboyJson,
+                )
+
+            runBlocking {
+                assertTrue("Should have synced OK") {
+                    rssLocalSync.syncFeeds(
+                        feedId = cowboyJsonId,
+                    )
+                }
+            }
+
+            assertEquals(
+                "Unexpected number of items in feed",
+                10,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyJsonId)
+                    .size,
+            )
+        }
+
+    @Test
+    fun syncCowboyAtomWorks() =
+        runBlocking {
+            val cowboyAtomId =
+                insertFeed(
+                    "cowboyatom",
+                    server.url("/atom.xml").toUrl(),
+                    cowboyAtom,
+                    isJson = false,
+                )
+
+            runBlocking {
+                rssLocalSync.syncFeeds(
+                    feedId = cowboyAtomId,
+                )
+            }
+
+            assertEquals(
+                "Unexpected number of items in feed",
+                15,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyAtomId)
+                    .size,
+            )
+        }
+
+    @Test
+    fun alternateIdMitigatesRssFeedsWithNonUniqueGuids() =
+        runBlocking {
+            val duplicateIdRss =
+                insertFeed(
+                    "aussieWeather",
+                    server.url("/IDZ00059.warnings_vic.xml").toUrl(),
+                    RSS_WITH_DUPLICATE_GUIDS,
+                    isJson = false,
+                    useAlternateId = true,
+                )
+
+            runBlocking {
+                rssLocalSync.syncFeeds(
+                    feedId = duplicateIdRss,
+                )
+            }
+
+            assertEquals(
+                "Expected duplicate guids to be mitigated by alternate id",
+                13,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(duplicateIdRss)
+                    .size,
+            )
+        }
+
+    @Test
+    fun syncAllWorks() =
+        runBlocking {
+            val cowboyJsonId =
+                insertFeed(
+                    "cowboyjson",
+                    server.url("/feed.json").toUrl(),
+                    cowboyJson,
+                )
+            val cowboyAtomId =
+                insertFeed(
+                    "cowboyatom",
+                    server.url("/atom.xml").toUrl(),
+                    cowboyAtom,
+                    isJson = false,
+                )
+
+            runBlocking {
+                rssLocalSync.syncFeeds(
+                    feedId = ID_UNSET,
+                )
+            }
+
+            assertEquals(
+                "Unexpected number of items in feed",
+                10,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyJsonId)
+                    .size,
+            )
+
+            assertEquals(
+                "Unexpected number of items in feed",
+                15,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyAtomId)
+                    .size,
+            )
+        }
+
+    @Test
+    fun responsesAreNotParsedUnlessFeedHashHasChanged() =
+        runBlocking {
+            val cowboyJsonId =
+                insertFeed(
+                    "cowboyjson",
+                    server.url("/feed.json").toUrl(),
+                    cowboyJson,
+                )
+
+            runBlocking {
+                rssLocalSync.syncFeeds(feedId = cowboyJsonId, forceNetwork = true)
+                testDb.db.feedDao().getFeed(cowboyJsonId)!!.let { feed ->
+                    assertTrue("Feed should have been synced", feed.lastSync.toEpochMilli() > 0)
+//                    assertTrue("Feed should have a valid response hash", feed.responseHash > 0)
+                    // "Long time" ago, but not unset
+                    testDb.db.feedDao().updateFeed(feed.copy(lastSync = Instant.ofEpochMilli(999L)))
+                }
+                rssLocalSync.syncFeeds(feedId = cowboyJsonId, forceNetwork = true)
+            }
+
+            assertEquals("Feed should have been fetched twice", 2, server.requestCount)
+
+            assertNotEquals(
+                "Cached response should still have updated feed last sync",
+                999L,
+                testDb.db
+                    .feedDao()
+                    .getFeed(cowboyJsonId)!!
+                    .lastSync
+                    .toEpochMilli(),
+            )
+        }
+
+    @Test
+    fun feedsSyncedWithin15MinAreIgnored() =
+        runBlocking {
+            val cowboyJsonId =
+                insertFeed(
+                    "cowboyjson",
+                    server.url("/feed.json").toUrl(),
+                    cowboyJson,
+                )
+
+            // Truncate to milliseconds to match database precision
+            val fourteenMinsAgo = Instant.ofEpochMilli(Instant.now().minusMinutes(14).toEpochMilli())
+            runBlocking {
+                rssLocalSync.syncFeeds(feedId = cowboyJsonId, forceNetwork = true)
+                testDb.db.feedDao().getFeed(cowboyJsonId)!!.let { feed ->
+                    assertTrue("Feed should have been synced", feed.lastSync.toEpochMilli() > 0)
+//                    assertTrue("Feed should have a valid response hash", feed.responseHash > 0)
+
+                    testDb.db.feedDao().updateFeed(feed.copy(lastSync = fourteenMinsAgo))
+                }
+                rssLocalSync.syncFeeds(
+                    feedId = cowboyJsonId,
+                    forceNetwork = false,
+                    minFeedAgeMinutes = 15,
+                )
+            }
+
+            assertEquals(
+                "Recently synced feed should not get a second network request",
+                1,
+                server.requestCount,
+            )
+
+            assertEquals(
+                "Last sync should not have changed",
+                fourteenMinsAgo,
+                testDb.db
+                    .feedDao()
+                    .getFeed(cowboyJsonId)!!
+                    .lastSync,
+            )
+        }
+
+    @Test
+    fun feedsGetRetryAfterSetAndWillNotSyncLater() =
+        runBlocking {
+            val cowboyJsonId =
+                testDb.db.feedDao().insertFeed(
+                    Feed(
+                        title = "feed1",
+                        url = server.url("/feed.json").toUrl(),
+                        tag = "",
+                    ),
+                )
+
+            val someOtherFeedId =
+                testDb.db.feedDao().insertFeed(
+                    Feed(
+                        title = "feed2",
+                        url = server.url("/feed2.json").toUrl(),
+                        tag = "",
+                    ),
+                )
+
+            val response =
+                MockResponse().also {
+                    it.setResponseCode(429)
+                    it.setHeader("Retry-After", "30")
+                }
+            server.enqueue(response)
+
+            rssLocalSync.syncFeeds(feedId = cowboyJsonId)
+            assertEquals("Request should have been sent ", 1, server.requestCount)
+
+            // Get the feed and check value
+            val feed = testDb.db.feedDao().getFeed(cowboyJsonId)!!
+            assertTrue("Feed should have a retry after value in the future") {
+                feed.retryAfter > Instant.now()
+            }
+
+            val feed2 = testDb.db.feedDao().getFeed(someOtherFeedId)!!
+            assertTrue("Feed should have a retry after value in the future") {
+                feed2.retryAfter > Instant.now()
+            }
+
+            rssLocalSync.syncFeeds(feedId = cowboyJsonId)
+            assertEquals("Request should not have been sent due to retry-after", 1, server.requestCount)
+
+            rssLocalSync.syncFeeds(feedId = someOtherFeedId)
+            assertEquals("Request should not have been sent due to retry-after", 1, server.requestCount)
+        }
+
+    @Test
+    fun feedsSyncedWithin15MinAreNotIgnoredWhenForcingNetwork() =
+        runBlocking {
+            val cowboyJsonId =
+                insertFeed(
+                    "cowboyjson",
+                    server.url("/feed.json").toUrl(),
+                    cowboyJson,
+                )
+
+            val fourteenMinsAgo = Instant.now().minusMinutes(14)
+            runBlocking {
+                rssLocalSync.syncFeeds(feedId = cowboyJsonId, forceNetwork = true)
+                testDb.db.feedDao().getFeed(cowboyJsonId)!!.let { feed ->
+                    assertTrue("Feed should have been synced", feed.lastSync.toEpochMilli() > 0)
+//                    assertTrue("Feed should have a valid response hash", feed.responseHash > 0)
+
+                    testDb.db.feedDao().updateFeed(feed.copy(lastSync = fourteenMinsAgo))
+                }
+                rssLocalSync.syncFeeds(
+                    feedId = cowboyJsonId,
+                    forceNetwork = true,
+                    minFeedAgeMinutes = 15,
+                )
+            }
+
+            assertEquals("Request should have been sent due to forced network", 2, server.requestCount)
+
+            assertNotEquals(
+                "Last sync should have changed",
+                fourteenMinsAgo,
+                testDb.db
+                    .feedDao()
+                    .getFeed(cowboyJsonId)!!
+                    .lastSync,
+            )
+        }
+
+    @Test
+    fun feedShouldNotBeUpdatedIfRequestFails() =
+        runBlocking {
+            val response =
+                MockResponse().also {
+                    it.setResponseCode(500)
+                }
+            server.enqueue(response)
+
+            val url = server.url("/feed.json")
+
+            val failingJsonId =
+                testDb.db.feedDao().insertFeed(
+                    Feed(
+                        title = "failJson",
+                        url = URL("$url"),
+                        tag = "",
+                    ),
+                )
+
+            runBlocking {
+                rssLocalSync.syncFeeds(feedId = failingJsonId)
+            }
+
+            assertNotEquals(
+                "Last sync should have been updated",
+                Instant.EPOCH,
+                testDb.db
+                    .feedDao()
+                    .getFeed(failingJsonId)!!
+                    .lastSync,
+            )
+
+            // Assert the feed was retrieved
+            assertEquals("/feed.json", server.takeRequest().path)
+        }
+
+    @Test
+    fun feedWithNoUniqueLinksGetsSomeGeneratedGUIDsFromTitles() =
+        runBlocking {
+            val response =
+                MockResponse().also {
+                    it.setResponseCode(200)
+                    it.setBody(String(nixosRss.readBytes()))
+                    it.setHeader("Content-Type", "application/xml")
+                }
+            server.enqueue(response)
+
+            val url = server.url("/news-rss.xml")
+
+            val feedId =
+                testDb.db.feedDao().insertFeed(
+                    Feed(
+                        title = "NixOS",
+                        url = URL("$url"),
+                        tag = "",
+                    ),
+                )
+
+            runBlocking {
+                rssLocalSync.syncFeeds(
+                    feedId = feedId,
+                )
+            }
+
+            // Assert the feed was retrieved
+            assertEquals("/news-rss.xml", server.takeRequest().path)
+            val items = testDb.db.feedItemDao().loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+            assertEquals(
+                "Unique IDs should have been generated for items",
+                99,
+                items.size,
+            )
+
+            // Should be unique to item so that it stays the same after updates
+            assertTrue {
+                items.first().guid.startsWith("https://nixos.org/news.html|")
+            }
+        }
+
+    @Test
+    fun feedWithNoDatesShouldGetSomeGenerated() =
+        runBlocking {
+            val response =
+                MockResponse().also {
+                    it.setResponseCode(200)
+                    it.setBody(fooRss(2))
+                    it.setHeader("Content-Type", "application/xml")
+                }
+            server.enqueue(response)
+
+            val url = server.url("/rss")
+
+            val feedId =
+                testDb.db.feedDao().insertFeed(
+                    Feed(
+                        url = URL("$url"),
+                    ),
+                )
+
+            val beforeSyncTime = Instant.now()
+
+            runBlocking {
+                rssLocalSync.syncFeeds(feedId = feedId)
+            }
+
+            // Assert the feed was retrieved
+            assertEquals("/rss", server.takeRequest().path)
+
+            val items = testDb.db.feedItemDao().loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+
+            assertNotNull(
+                "Item should have gotten a pubDate generated",
+                items[0].pubDate,
+            )
+
+            assertNotEquals(
+                "Items without feed dates should each get a distinct generated pubDate",
+                items[0].pubDate,
+                items[1].pubDate,
+            )
+
+            assertTrue(
+                "The first item's generated pubDate should be after the sync started",
+                items[0].pubDate!!.toInstant() > beforeSyncTime,
+            )
+
+            // Compare ID to compare insertion order (and thus pubdate compared to raw feed)
+            assertTrue("Item appearing first in the feed (guid .../1) should have a more recent generated pubDate than item appearing second (guid .../2)") {
+                items[0].guid == "https://foo.bar/1" &&
+                    items[1].guid == "https://foo.bar/2" &&
+                    items[0].pubDate!! > items[1].pubDate!!
+            }
+        }
+
+    @Test
+    fun feedShouldNotBeCleanedToHaveLessItemsThanActualFeed() =
+        runBlocking {
+            val feedItemCount = 9
+            server.enqueue(
+                MockResponse().also {
+                    it.setResponseCode(200)
+                    it.setBody(fooRss(feedItemCount))
+                    it.setHeader("Content-Type", "application/xml")
+                },
+            )
+
+            val url = server.url("/rss")
+
+            val feedId =
+                testDb.db.feedDao().insertFeed(
+                    Feed(
+                        url = URL("$url"),
+                    ),
+                )
+
+            val maxFeedItemCount = 5
+
+            // Sync first time
+            runBlocking {
+                rssLocalSync.syncFeeds(
+                    feedId = feedId,
+                    maxFeedItemCount = maxFeedItemCount,
+                )
+            }
+
+            // Assert the feed was retrieved
+            assertEquals("/rss", server.takeRequest(100, TimeUnit.MILLISECONDS)!!.path)
+
+            testDb.db.feedItemDao().loadFeedItemsInFeedDescDoNotUseInProd(feedId).let { items ->
+                assertEquals(
+                    "Feed should have no less items than in the raw feed even if that's more than cleanup count",
+                    feedItemCount,
+                    items.size,
+                )
+            }
+        }
+
+    @Test
+    @Ignore("This test is slow, would be nice to rewrite with a delay...")
+    fun slowResponseShouldBeOk() =
+        runBlocking {
+            val url = server.url("/atom.xml").toUrl()
+            val cowboyAtomId = insertFeed("cowboy", url, cowboyAtom, isJson = false)
+            responses[url]!!.throttleBody(1024 * 100, 29, TimeUnit.SECONDS)
+
+            runBlocking {
+                rssLocalSync.syncFeeds(feedId = cowboyAtomId)
+            }
+
+            assertEquals(
+                "Feed should have been parsed from slow response",
+                15,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyAtomId)
+                    .size,
+            )
+        }
+
+    @Test
+    @Ignore("This test is slow, would be nice to rewrite with a delay...")
+    fun verySlowResponseShouldBeCancelled() =
+        runBlocking {
+            val url = server.url("/atom.xml").toUrl()
+            val cowboyAtomId = insertFeed("cowboy", url, cowboyAtom, isJson = false)
+            responses[url]!!.throttleBody(1024 * 100, 31, TimeUnit.SECONDS)
+
+            rssLocalSync.syncFeeds(feedId = cowboyAtomId)
+
+            assertEquals(
+                "Feed should not have been parsed from extremely slow response",
+                0,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyAtomId)
+                    .size,
+            )
+        }
+
+    @Test
+    fun duplicateItemsAreNotSaved(): Unit =
+        runBlocking {
+            val atomUrl = server.url("/atom.xml").toUrl()
+            val cowboyAtomId = insertFeed("cowboyAtom", atomUrl, cowboyAtom, isJson = false, skipDuplicates = true)
+
+            runBlocking {
+                rssLocalSync.syncFeeds(feedId = cowboyAtomId)
+            }
+
+            assertEquals(
+                "All items from first feed should be present",
+                15,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyAtomId)
+                    .size,
+            )
+
+            val jsonUrl = server.url("/feed.json").toUrl()
+            val cowboyJsonId = insertFeed("cowboyJson", jsonUrl, cowboyJson, isJson = true, skipDuplicates = true)
+
+            runBlocking {
+                rssLocalSync.syncFeeds(feedId = cowboyJsonId)
+            }
+
+            assertEquals(
+                "All items should have been filtered out due to duplicate checking",
+                0,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyJsonId)
+                    .size,
+            )
+        }
+
+    @Test
+    fun itemsAreNotDeletedIfStillInFeed(): Unit =
+        runBlocking {
+            settingsStore.setMaxCountPerFeed(1)
+
+            val atomUrl = server.url("/atom.xml").toUrl()
+            val cowboyAtomId = insertFeed("cowboyAtom", atomUrl, cowboyAtom, isJson = false, skipDuplicates = true)
+
+            rssLocalSync.syncFeeds(feedId = cowboyAtomId)
+
+            assertEquals(
+                "All items from first feed should be present",
+                15,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyAtomId)
+                    .size,
+            )
+
+            // Delete items
+            responses[atomUrl] =
+                MockResponse().apply {
+                    setResponseCode(200)
+                    setHeader("Content-Type", "application/xml")
+                    setBody(cowboyDeletedMiddleAtom)
+                }
+
+            rssLocalSync.syncFeeds(feedId = cowboyAtomId, debugReallyForceNetwork = true)
+
+            val items =
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyAtomId)
+
+            assertEquals(
+                "Items should have been deleted, one is left over due to math",
+                3,
+                items.size,
+            )
+
+            val expectedGuids =
+                setOf(
+                    // First one is second, which is not deleted due to math
+                    "https://cowboyprogrammer.org/2016/10/reduce-colors-in-images/",
+                    // Next two are the ones that are still present in the feed and should absolutely not be deleted
+                    "https://cowboyprogrammer.org/2018/03/fixed-vs-variable-interest-rates/",
+                    "https://cowboyprogrammer.org/2014/04/advertising-thats-not-intrusive-orly/",
+                )
+
+            assertTrue("Expected the remaining items to be the ones in the feed: ${items.map { it.guid }}") {
+                items.all {
+                    it.guid in expectedGuids
+                }
+            }
+        }
+
+    @Test
+    fun currentlySelectedArticleIsNotDeleted(): Unit =
+        runBlocking {
+            settingsStore.setMaxCountPerFeed(1)
+
+            val atomUrl = server.url("/atom.xml").toUrl()
+            val cowboyAtomId = insertFeed("cowboyAtom", atomUrl, cowboyAtom, isJson = false, skipDuplicates = true)
+
+            rssLocalSync.syncFeeds(feedId = cowboyAtomId)
+
+            assertEquals(
+                "All items from first feed should be present",
+                15,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyAtomId)
+                    .size,
+            )
+
+            // Get an article that would normally be deleted and set it as currently selected
+            val items =
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyAtomId)
+
+            // Select an article that would be deleted
+            val selectedArticle =
+                items.firstOrNull { it.link == "https://cowboyprogrammer.org/2014/04/are-ipads-retarding-us/" }
+            assertNotNull(
+                "Could not find the specified article: ${items.firstOrNull { it.link?.contains("retard") ?: false }}",
+                selectedArticle,
+            )
+            val selectedArticleId = selectedArticle!!.id
+            settingsStore.setCurrentArticle(selectedArticleId)
+
+            // Delete items by syncing again with smaller feed
+            responses[atomUrl] =
+                MockResponse().apply {
+                    setResponseCode(200)
+                    setHeader("Content-Type", "application/xml")
+                    setBody(cowboyDeletedMiddleAtom)
+                }
+
+            rssLocalSync.syncFeeds(feedId = cowboyAtomId, debugReallyForceNetwork = true)
+
+            val itemsAfterSync =
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(cowboyAtomId)
+
+            assertTrue("Selected article should not have been deleted") {
+                itemsAfterSync.any { it.id == selectedArticleId }
+            }
+
+            // Verify the selected article is still in the database
+            val selectedArticleFromDb = testDb.db.feedItemDao().loadFeedItem(selectedArticleId)
+            assertNotNull("Selected article should still exist in database", selectedArticleFromDb)
+        }
+
+    @Test
+    fun remoteReadMarkIsAppliedToNewItemAndMarkedAsSynced() =
+        runBlocking {
+            val feedUrl = server.url("/feed.json").toUrl()
+            val feedId = insertFeed("cowboyjson", feedUrl, cowboyJson)
+
+            val itemGuid = "https://cowboyprogrammer.org/2018/03/fixed-vs-variable-interest-rates/"
+
+            // SyncRemote must exist as FK parent for RemoteReadMark
+            testDb.db.syncRemoteDao().insert(SyncRemote(id = 1L, deviceName = "TestDevice", secretKey = ""))
+            testDb.db.remoteReadMarkDao().insert(
+                RemoteReadMark(
+                    sync_remote = 1L,
+                    feedUrl = feedUrl,
+                    guid = itemGuid,
+                    timestamp = Instant.now(),
+                ),
+            )
+
+            rssLocalSync.syncFeeds(feedId = feedId)
+
+            val feedItems = testDb.db.feedItemDao().loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+            val item = feedItems.find { it.guid == itemGuid }
+            assertNotNull("Item should have been fetched from feed", item)
+            assertNotNull("Item should be marked as read via remote read-mark", item!!.readTime)
+
+            // With the fix: item must be in read_status_synced so it is not re-sent to server
+            val unsyncedReadItems = testDb.db.readStatusSyncedDao().getFeedItemsWithoutSyncedReadMark()
+            assertTrue(
+                "Item applied via remote read-mark must not appear as unsynced (would cause read echo back to server)",
+                unsyncedReadItems.none { it.id == item.id },
+            )
+        }
+
+    @Test
+    fun applyRemoteReadMarksCleansStaleEntriesForAlreadyReadItems() =
+        runBlocking {
+            val feedUrl = server.url("/feed.json").toUrl()
+            val feedId = insertFeed("cowboyjson", feedUrl, cowboyJson)
+
+            val itemGuid = "https://cowboyprogrammer.org/2018/03/fixed-vs-variable-interest-rates/"
+
+            testDb.db.syncRemoteDao().insert(SyncRemote(id = 1L, deviceName = "TestDevice", secretKey = ""))
+            testDb.db.remoteReadMarkDao().insert(
+                RemoteReadMark(
+                    sync_remote = 1L,
+                    feedUrl = feedUrl,
+                    guid = itemGuid,
+                    timestamp = Instant.now(),
+                ),
+            )
+
+            // First sync: item is fetched and marked as read via alreadyReadGuids
+            rssLocalSync.syncFeeds(feedId = feedId)
+
+            // Verify the mark still exists after syncFeeds (it was applied but not yet cleaned by applyRemoteReadMarks above)
+            // Now call applyRemoteReadMarks explicitly — this should clean up the stale entry
+            val repository: Repository by instance()
+            repository.applyRemoteReadMarks()
+
+            val remainingGuids = testDb.db.remoteReadMarkDao().getGuidsWhichAreSyncedAsReadInFeed(feedUrl)
+            assertTrue(
+                "Stale remote_read_mark entry should be cleaned up after applyRemoteReadMarks for already-read item",
+                remainingGuids.isEmpty(),
+            )
+        }
+
+    @Test
+    fun itemsNotInRemoteReadMarkAreNotMarkedAsRead() =
+        runBlocking {
+            val feedUrl = server.url("/feed.json").toUrl()
+            val feedId = insertFeed("cowboyjson", feedUrl, cowboyJson)
+
+            // No remote read marks inserted
+
+            rssLocalSync.syncFeeds(feedId = feedId)
+
+            val feedItems = testDb.db.feedItemDao().loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+            assertEquals("Feed should have 10 items", 10, feedItems.size)
+            assertTrue(
+                "No items should be marked as read when there are no remote read marks",
+                feedItems.all { it.readTime == null },
+            )
+        }
+
+    @Test
+    fun blockRuleDropsMatchingItemsAtFetchTime() =
+        runBlocking {
+            val feedId =
+                insertFeed(
+                    "foo",
+                    server.url("/foo.xml").toUrl(),
+                    fooRss(3),
+                    isJson = false,
+                    blockRules = "Title=Foo Item 2",
+                )
+
+            rssLocalSync.syncFeeds(feedId = feedId)
+
+            val items = testDb.db.feedItemDao().loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+
+            assertEquals("Blocked item should not have been stored", 2, items.size)
+            assertTrue(
+                "Blocked item should not have been stored",
+                items.none { it.plainTitle == "Foo Item 2" },
+            )
+        }
+
+    @Test
+    fun allowRuleKeepsOnlyMatchingItems() =
+        runBlocking {
+            val feedId =
+                insertFeed(
+                    "foo",
+                    server.url("/foo.xml").toUrl(),
+                    fooRss(3),
+                    isJson = false,
+                    allowRules = "Title=Foo Item 2",
+                )
+
+            rssLocalSync.syncFeeds(feedId = feedId)
+
+            val items = testDb.db.feedItemDao().loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+
+            assertEquals("Only the allowed item should have been stored", 1, items.size)
+            assertEquals("Foo Item 2", items.single().plainTitle)
+        }
+
+    @Test
+    fun blockedItemsGetNoBlobFile() =
+        runBlocking {
+            // Blob files live in the shared app files dir, so start from a known state
+            filePaths.articleDir.listFiles()?.forEach { it.delete() }
+
+            val feedId =
+                insertFeed(
+                    "foo",
+                    server.url("/foo.xml").toUrl(),
+                    fooRss(3),
+                    isJson = false,
+                    blockRules = "Title=Foo Item 2",
+                )
+
+            rssLocalSync.syncFeeds(feedId = feedId)
+
+            assertEquals(
+                "No blob file should have been written for the blocked item",
+                2,
+                filePaths.articleDir.listFiles()?.size,
+            )
+        }
+
+    @Test
+    fun itemsStoredBeforeRuleWasAddedAreNotDeleted() =
+        runBlocking {
+            val feedId =
+                insertFeed(
+                    "foo",
+                    server.url("/foo.xml").toUrl(),
+                    fooRss(3),
+                    isJson = false,
+                )
+
+            rssLocalSync.syncFeeds(feedId = feedId)
+
+            assertEquals(
+                3,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+                    .size,
+            )
+
+            testDb.db.feedDao().getFeed(feedId)!!.let { feed ->
+                testDb.db.feedDao().updateFeed(feed.copy(blockRules = "Title=Foo Item"))
+            }
+
+            rssLocalSync.syncFeeds(feedId = feedId, debugReallyForceNetwork = true)
+
+            assertEquals(
+                "Rules apply to future fetches only - stored items must survive",
+                3,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+                    .size,
+            )
+        }
+
+    @Test
+    fun invalidRulesDoNotBreakTheFeed() =
+        runBlocking {
+            val feedId =
+                insertFeed(
+                    "foo",
+                    server.url("/foo.xml").toUrl(),
+                    fooRss(3),
+                    isJson = false,
+                    blockRules = "Title=(unclosed\nnonsense",
+                    allowRules = "Foo=bar",
+                )
+
+            rssLocalSync.syncFeeds(feedId = feedId)
+
+            assertEquals(
+                "Invalid rules must fail open",
+                3,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+                    .size,
+            )
+        }
+
+    @Test
+    fun blockRuleTakesPrecedenceOverAllowRule() =
+        runBlocking {
+            val feedId =
+                insertFeed(
+                    "foo",
+                    server.url("/foo.xml").toUrl(),
+                    fooRss(3),
+                    isJson = false,
+                    blockRules = "Title=Foo Item 2",
+                    allowRules = "Title=Foo Item 2",
+                )
+
+            rssLocalSync.syncFeeds(feedId = feedId)
+
+            assertEquals(
+                "Block rules are evaluated first",
+                0,
+                testDb.db
+                    .feedItemDao()
+                    .loadFeedItemsInFeedDescDoNotUseInProd(feedId)
+                    .size,
+            )
+        }
+
+    private fun fooRss(itemsCount: Int = 1): String {
+        val items =
+            (1..itemsCount).joinToString("\n") {
+                """
+                <item>
+                  <title>Foo Item $it</title>
+                  <link>https://foo.bar/$it</link>
+                  <description>Woop woop $it</description>
+                </item>
+                """.trimIndent()
+            }
+
+        return """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0">
+            <channel>
+            <title>Foo Feed</title>
+            <link>https://foo.bar</link>
+            $items
+            </channel>
+            </rss>
+            """.trimIndent()
+    }
+}
