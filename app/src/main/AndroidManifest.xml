@@ -21,6 +21,8 @@
   <!-- For background jobs -->
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
   <uses-permission android:name="android.permission.RUN_USER_INITIATED_JOBS" />
+  <!-- For installing updates downloaded from GitHub Releases -->
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
   <permission
     android:name="${applicationId}.permission.read"
@@ -167,6 +169,17 @@
       android:label="@string/open_link_in_browser"
       android:launchMode="singleInstance"
       android:taskAffinity="${applicationId}.OpenLinkTask" />
+
+    <!-- Hands the downloaded update APK to the system installer -->
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.updateprovider"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/update_file_paths" />
+    </provider>
 
     <!-- Used by some external apps -->
     <provider

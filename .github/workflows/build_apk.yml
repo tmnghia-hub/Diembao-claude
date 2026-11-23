@@ -1,7 +1,9 @@
 name: Build APK
 
-# Chạy thủ công: tab Actions -> "Build APK" -> Run workflow
+# Tự chạy mỗi khi bạn đẩy code lên nhánh main, hoặc chạy tay: Actions -> Build APK -> Run workflow
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -9,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
-      contents: read
+      contents: write # cần để đăng bản phát hành (Releases)
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -34,12 +36,26 @@ jobs:
         continue-on-error: true
         run: ./gradlew ktlintCheck
 
+      # APK debug luôn được ký bằng shareddebug.keystore trong repo,
+      # nên mọi bản build đều cài đè được lên nhau và giữ nguyên dữ liệu.
       - name: build debug apk
-        run: ./gradlew assembleFdroidDebug
+        run: ./gradlew assembleFdroidDebug -PupdateRepo=${{ github.repository }} -PbuildCommit=${{ github.sha }}
 
-      - name: upload apk
+      - name: upload apk (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: diembao-apk
           retention-days: 30
           path: app/build/outputs/apk/fdroid/debug/*.apk
+
+      # Đăng APK lên Releases với tên cố định để tải thẳng trên điện thoại
+      - name: publish release (latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/fdroid/debug/*.apk diembao-latest.apk
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest diembao-latest.apk \
+            --title "Diembao - bản mới nhất" \
+            --notes "Build từ commit ${{ github.sha }}" \
+            --latest

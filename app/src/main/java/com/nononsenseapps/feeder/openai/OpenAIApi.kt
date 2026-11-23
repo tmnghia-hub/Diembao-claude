@@ -585,6 +585,11 @@ val OpenAISettings.translationProviderKey: String
         }
 
 /**
+ * True for the engines that run on the device, as opposed to the online APIs.
+ */
+fun isOfflineTranslationProvider(provider: String): Boolean = provider == TRANSLATION_PROVIDER_OFFLINE || provider == TRANSLATION_PROVIDER_MLKIT
+
+/**
  * Translation priority:
  * 1. A configured translation API (DeepL)
  * 2. A configured AI model (the key entered under AI features)
@@ -708,5 +713,6 @@ const val LOCAL_TRANSLATION_PROVIDER_URL = "local://translation"
 private const val MAX_LLM_CHUNK_CHARS = 6000
 
 const val TRANSLATION_PROVIDER_OFFLINE = "offline"
+const val TRANSLATION_PROVIDER_MLKIT = "mlkit"
 const val TRANSLATION_PROVIDER_DEEPL = "deepl"
 const val TRANSLATION_PROVIDER_AI_PREFIX = "ai:"

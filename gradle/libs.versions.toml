@@ -97,6 +97,7 @@ accompanist-permissions = { module = "com.google.accompanist:accompanist-permiss
 accompanist-adaptive = { module = "com.google.accompanist:accompanist-adaptive", version.ref = "accompanist" }
 desugar = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugar" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+mlkit-translate = { module = "com.google.mlkit:translate", version = "17.0.3" }
 tagsoup = { module = "org.ccil.cowan.tagsoup:tagsoup", version.ref = "tagsoup" }
 icu4j = { module = "com.ibm.icu:icu4j", version.ref = "icu4j" }
 gofeed-android = { module = "com.nononsenseapps.gofeed:gofeed-android", version.ref = "gofeed" }

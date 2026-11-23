@@ -252,6 +252,16 @@
     <string name="translated_by">Dịch bởi %1$s</string>
     <string name="translation_provider_offline">dịch ngoại tuyến</string>
     <string name="translation_provider_deepl">DeepL</string>
+    <string name="translation_provider_mlkit">Google ML Kit (ngoại tuyến)</string>
     <string name="translation_provider_ai">AI (%1$s)</string>
-    <string name="translation_priority_hint">Thứ tự dịch: ưu tiên DeepL hoặc khóa AI (nhập ở mục Tính năng AI), sau đó là dịch ngoại tuyến. Nếu API lỗi hoặc chưa có khóa, ứng dụng tự chuyển sang ngoại tuyến.</string>
+    <string name="translation_priority_hint">Thứ tự dịch: ưu tiên DeepL hoặc khóa AI (nhập ở mục Tính năng AI), sau đó là dịch ngoại tuyến (Google ML Kit, rồi engine tích hợp). Nếu API lỗi hoặc chưa có khóa, ứng dụng tự chuyển sang ngoại tuyến.</string>
+    <string name="app_update_group">Cập nhật ứng dụng</string>
+    <string name="app_update_check">Kiểm tra cập nhật</string>
+    <string name="app_update_checking">Đang kiểm tra cập nhật…</string>
+    <string name="app_update_up_to_date">Bạn đang dùng bản mới nhất. Chạm để kiểm tra lại</string>
+    <string name="app_update_available">Có bản mới. Chạm để tải và cài đặt</string>
+    <string name="app_update_downloading">Đang tải… %1$d%%</string>
+    <string name="app_update_needs_permission">Hãy cho phép ứng dụng này cài ứng dụng ở màn hình vừa mở, rồi chạm vào đây lần nữa</string>
+    <string name="app_update_not_configured">Bản này không có nguồn cập nhật. Hãy build bằng workflow GitHub để dùng tính năng này</string>
+    <string name="app_update_error">Cập nhật thất bại: %1$s. Chạm để thử lại</string>
 </resources>

@@ -50,6 +50,10 @@ android {
                 .get()
                 .toInt()
 
+        // Used by the in-app updater. Set by the GitHub workflow, empty for other builds.
+        buildConfigField("String", "UPDATE_REPO", "\"${project.findProperty("updateRepo") ?: ""}\"")
+        buildConfigField("String", "BUILD_COMMIT", "\"${project.findProperty("buildCommit") ?: ""}\"")
+
         vectorDrawables.useSupportLibrary = true
 
         androidResources.localeFilters.addAll(getListOfSupportedLocales())
@@ -259,6 +263,7 @@ dependencies {
     implementation(libs.bundles.okhttp.android)
     implementation(libs.bundles.kotlin)
     implementation(libs.openai.client)
+    implementation(libs.mlkit.translate)
     implementation(libs.ktor.client.okhttp)
 
     implementation(libs.glance.appwidget)

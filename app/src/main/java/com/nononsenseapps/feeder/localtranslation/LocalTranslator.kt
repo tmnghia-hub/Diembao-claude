@@ -13,6 +13,12 @@ import android.view.translation.TranslationResponseValue
 import android.view.translation.TranslationSpec
 import androidx.annotation.RequiresApi
 import androidx.annotation.StringRes
+import com.google.android.gms.tasks.Task
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.Translator
+import com.google.mlkit.nl.translate.TranslatorOptions
 import com.nononsenseapps.feeder.R
 import com.nononsenseapps.feeder.model.detectLocaleFromText
 import com.nononsenseapps.feeder.model.hasEnoughTextForLanguageDetection
@@ -20,9 +26,12 @@ import com.nononsenseapps.feeder.model.prepareTextForLanguageDetection
 import com.nononsenseapps.feeder.model.prepareTextSamplesForLanguageDetection
 import com.nononsenseapps.feeder.openai.OpenAIApi.TranslationResult
 import com.nononsenseapps.feeder.openai.OpenAIApi.TranslationResult.ErrorAction
+import com.nononsenseapps.feeder.openai.TRANSLATION_PROVIDER_MLKIT
 import com.nononsenseapps.feeder.util.logDebug
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.jsoup.Jsoup
@@ -32,6 +41,8 @@ import org.kodein.di.DI
 import org.kodein.di.DIAware
 import org.kodein.di.instance
 import java.util.concurrent.Executor
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class LocalTranslator(
     override val di: DI,
@@ -76,6 +87,18 @@ class LocalTranslator(
                     content = content,
                     detectedLanguage = sourceLang,
                 )
+            }
+
+            // Google ML Kit first. Null means it cannot help, then the next engine gets a try.
+            val mlKitResult =
+                translateWithMlKit(
+                    content = content,
+                    sourceLang = sourceLang,
+                    targetLang = targetLang,
+                    preserveHtml = preserveHtml,
+                )
+            if (mlKitResult != null) {
+                return@withContext mlKitResult
             }
 
             val androidSystemResult =
@@ -221,6 +244,101 @@ class LocalTranslator(
                     content = result.message,
                     action = result.action,
                 )
+        }
+
+    /**
+     * Google ML Kit on-device translation. Needs Google Play services, and downloads a small
+     * model (around 30 MB) per language the first time it is used.
+     * Returns null when it cannot be used (unsupported language, model not downloadable...)
+     * so that the next offline engine gets a chance.
+     */
+    private suspend fun translateWithMlKit(
+        content: String,
+        sourceLang: String,
+        targetLang: String,
+        preserveHtml: Boolean,
+    ): TranslationResult? {
+        val mlKitSource = TranslateLanguage.fromLanguageTag(sourceLang) ?: return null
+        val mlKitTarget = TranslateLanguage.fromLanguageTag(targetLang) ?: return null
+
+        val translator =
+            Translation.getClient(
+                TranslatorOptions
+                    .Builder()
+                    .setSourceLanguage(mlKitSource)
+                    .setTargetLanguage(mlKitTarget)
+                    .build(),
+            )
+
+        return try {
+            translator.downloadModelIfNeeded(DownloadConditions.Builder().build()).awaitResult()
+            if (preserveHtml) {
+                translateHtmlWithMlKit(translator, content, sourceLang)
+            } else {
+                translatePlainTextWithMlKit(translator, content, sourceLang)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logDebug(LOG_TAG, "ML Kit translation not available: ${e.message}")
+            null
+        } finally {
+            translator.close()
+        }
+    }
+
+    private suspend fun translateHtmlWithMlKit(
+        translator: Translator,
+        html: String,
+        sourceLang: String,
+    ): TranslationResult {
+        val document = Jsoup.parseBodyFragment(html)
+        val translationTargets =
+            document
+                .body()
+                .let(::collectTextNodes)
+                .filterNot { textNode ->
+                    generateSequence(textNode.parent()) { it.parent() }
+                        .any { it.nodeName() == "code" || it.nodeName() == "pre" }
+                }.map { textNode -> HtmlTextNodeTranslation.from(textNode) }
+                .filter { target -> target.text.any(Char::isLetter) }
+
+        translationTargets.forEach { target ->
+            val translated = translator.translate(target.text).awaitResult()
+            target.textNode.text(target.leadingWhitespace + translated + target.trailingWhitespace)
+        }
+
+        return TranslationResult.Success(
+            content = document.body().html(),
+            detectedLanguage = sourceLang,
+            provider = TRANSLATION_PROVIDER_MLKIT,
+        )
+    }
+
+    private suspend fun translatePlainTextWithMlKit(
+        translator: Translator,
+        content: String,
+        sourceLang: String,
+    ): TranslationResult {
+        val translatedLines =
+            content.lines().map { line ->
+                if (line.any(Char::isLetter)) {
+                    translator.translate(line).awaitResult()
+                } else {
+                    line
+                }
+            }
+        return TranslationResult.Success(
+            content = translatedLines.joinToString(separator = "\n"),
+            detectedLanguage = sourceLang,
+            provider = TRANSLATION_PROVIDER_MLKIT,
+        )
+    }
+
+    private suspend fun <T> Task<T>.awaitResult(): T =
+        suspendCancellableCoroutine { continuation ->
+            addOnSuccessListener(directExecutor) { result -> continuation.resume(result) }
+            addOnFailureListener(directExecutor) { error -> continuation.resumeWithException(error) }
         }
 
     private suspend fun translateHtmlWithBergamot(

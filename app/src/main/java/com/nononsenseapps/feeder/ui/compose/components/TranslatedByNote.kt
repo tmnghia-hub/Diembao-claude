@@ -9,6 +9,7 @@ import androidx.compose.ui.text.font.FontStyle
 import com.nononsenseapps.feeder.R
 import com.nononsenseapps.feeder.openai.TRANSLATION_PROVIDER_AI_PREFIX
 import com.nononsenseapps.feeder.openai.TRANSLATION_PROVIDER_DEEPL
+import com.nononsenseapps.feeder.openai.TRANSLATION_PROVIDER_MLKIT
 import com.nononsenseapps.feeder.openai.TRANSLATION_PROVIDER_OFFLINE
 
 /**
@@ -27,6 +28,7 @@ fun TranslatedByNote(
         when {
             provider == TRANSLATION_PROVIDER_OFFLINE -> stringResource(R.string.translation_provider_offline)
             provider == TRANSLATION_PROVIDER_DEEPL -> stringResource(R.string.translation_provider_deepl)
+            provider == TRANSLATION_PROVIDER_MLKIT -> stringResource(R.string.translation_provider_mlkit)
             provider.startsWith(TRANSLATION_PROVIDER_AI_PREFIX) ->
                 stringResource(
                     R.string.translation_provider_ai,

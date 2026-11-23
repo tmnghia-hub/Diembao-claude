@@ -12,6 +12,7 @@ import com.nononsenseapps.feeder.openai.TRANSLATION_PROVIDER_OFFLINE
 import com.nononsenseapps.feeder.openai.canTranslate
 import com.nononsenseapps.feeder.openai.isDeepL
 import com.nononsenseapps.feeder.openai.isLocalTranslation
+import com.nononsenseapps.feeder.openai.isOfflineTranslationProvider
 import com.nononsenseapps.feeder.ui.compose.feed.FeedListItem
 import com.nononsenseapps.feeder.util.FilePathProvider
 import kotlinx.coroutines.Dispatchers
@@ -247,8 +248,8 @@ class TranslationManager(
             val usedOfflineFallback =
                 !settings.isLocalTranslation &&
                     (
-                        translatedSnippetResult?.provider == TRANSLATION_PROVIDER_OFFLINE ||
-                            translatedTitleResult?.provider == TRANSLATION_PROVIDER_OFFLINE
+                        isOfflineTranslationProvider(translatedSnippetResult?.provider.orEmpty()) ||
+                            isOfflineTranslationProvider(translatedTitleResult?.provider.orEmpty())
                     )
             if (updatedCache != cache && !usedOfflineFallback) {
                 saveCache(
@@ -386,7 +387,7 @@ class TranslationManager(
 
             // A fallback translation must not be remembered as if the API had produced it,
             // otherwise the better translation would never be retried
-            if (settings.isLocalTranslation || translatedBy != TRANSLATION_PROVIDER_OFFLINE) {
+            if (settings.isLocalTranslation || !isOfflineTranslationProvider(translatedBy)) {
                 saveCache(itemId, settings, targetLanguage, updatedCache)
             }
 
@@ -621,7 +622,7 @@ class TranslationManager(
                     preserveHtml = preserveHtml,
                 )
         ) {
-            is TranslationResult.Success -> result.copy(provider = TRANSLATION_PROVIDER_OFFLINE)
+            is TranslationResult.Success -> result.copy(provider = result.provider.ifBlank { TRANSLATION_PROVIDER_OFFLINE })
             is TranslationResult.Error -> result
         }
 
