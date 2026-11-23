@@ -40,3 +40,8 @@ Cài đặt -> Cập nhật ứng dụng -> Kiểm tra cập nhật. App đọc 
 commit của bản đang chạy (BuildConfig.BUILD_COMMIT, do workflow truyền vào), tải APK rồi mở trình cài đặt
 của Android. Cài đè cùng chữ ký nên giữ nguyên dữ liệu. Chỉ hoạt động với repo Public.
 File: `model/AppUpdater.kt`, `ui/compose/settings/AppUpdateSection.kt`, `res/xml/update_file_paths.xml`.
+
+## Sửa: tự động dịch tiêu đề với ML Kit
+Khi không có khóa API, việc tự động dịch thẻ/bài chỉ chạy nếu `canTranslateWithoutBergamotDownload` = true,
+trước đây hàm này không biết ML Kit nên không bao giờ bắt đầu dịch. Nay nó cũng trả true khi ML Kit hỗ trợ
+cặp ngôn ngữ và (mô hình đã tải hoặc máy đang có mạng để tải lần đầu).

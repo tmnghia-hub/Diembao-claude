@@ -2,6 +2,8 @@ package com.nononsenseapps.feeder.localtranslation
 
 import android.app.Application
 import android.icu.util.ULocale
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.view.translation.TranslationCapability
 import android.view.translation.TranslationContext
@@ -15,7 +17,9 @@ import androidx.annotation.RequiresApi
 import androidx.annotation.StringRes
 import com.google.android.gms.tasks.Task
 import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
@@ -158,6 +162,10 @@ class LocalTranslator(
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasAndroidSystemModel(sourceLang, targetLang)) {
+                return@withContext true
+            }
+
+            if (canTranslateWithMlKit(sourceLang, targetLang)) {
                 return@withContext true
             }
 
@@ -333,6 +341,38 @@ class LocalTranslator(
             detectedLanguage = sourceLang,
             provider = TRANSLATION_PROVIDER_MLKIT,
         )
+    }
+
+    /**
+     * True if ML Kit supports the language pair and can translate right now: either the models
+     * are already on the device, or the device is online so they can be downloaded (about 30 MB
+     * per language, once). Used to decide if automatic translation may start.
+     */
+    private suspend fun canTranslateWithMlKit(
+        sourceLang: String,
+        targetLang: String,
+    ): Boolean {
+        val mlKitSource = TranslateLanguage.fromLanguageTag(sourceLang) ?: return false
+        val mlKitTarget = TranslateLanguage.fromLanguageTag(targetLang) ?: return false
+
+        return try {
+            val manager = RemoteModelManager.getInstance()
+            val modelsDownloaded =
+                listOf(mlKitSource, mlKitTarget).all { language ->
+                    manager.isModelDownloaded(TranslateRemoteModel.Builder(language).build()).awaitResult() == true
+                }
+            modelsDownloaded || isOnline()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun isOnline(): Boolean {
+        val connectivityManager = application.getSystemService(ConnectivityManager::class.java) ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     private suspend fun <T> Task<T>.awaitResult(): T =
