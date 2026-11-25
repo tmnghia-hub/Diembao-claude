@@ -58,6 +58,12 @@ android {
 
         androidResources.localeFilters.addAll(getListOfSupportedLocales())
 
+        // Phones made in the last decade are 64-bit ARM. Dropping the other CPU variants of the
+        // native libraries (ML Kit etc.) makes the APK much smaller.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+
         // For espresso tests
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -100,13 +106,16 @@ android {
     buildTypes {
         val debug =
             getByName("debug") {
-                isMinifyEnabled = false
-                isShrinkResources = false
+                // Shrinking removes unused library code and resources, so the APK is much smaller and starts faster
+                isMinifyEnabled = true
+                isShrinkResources = true
                 applicationIdSuffix = ".debug"
-                isPseudoLocalesEnabled = true
+                isPseudoLocalesEnabled = false
                 proguardFiles(
                     getDefaultProguardFile("proguard-android-optimize.txt"),
                     "proguard-rules.pro",
+                    // Keeps readable stack traces for bug reports
+                    "proguard-debug.pro",
                 )
                 signingConfig = signingConfigs.getByName("shareddebug")
             }
@@ -218,7 +227,7 @@ androidComponents {
 }
 
 composeCompiler {
-    includeSourceInformation = true
+    includeSourceInformation = false
     // reportsDestination = layout.buildDirectory.dir("compose_metrics")
 }
 
@@ -285,7 +294,11 @@ dependencies {
     debugImplementation(libs.compose.ui.test.manifest)
 }
 
-fun getListOfSupportedLocales(): List<String> {
+// Điểm Báo only ships English and Vietnamese
+fun getListOfSupportedLocales(): List<String> = listOf("en", "vi")
+
+@Suppress("unused")
+fun getListOfAllTranslatedLocales(): List<String> {
     val resFolder = file(projectDir.resolve("src/main/res"))
 
     return resFolder
