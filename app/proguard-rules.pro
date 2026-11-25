@@ -80,3 +80,17 @@
 -dontwarn javax.lang.model.element.ElementKind
 -dontwarn jdk.javadoc.doclet.Taglet$Location
 -dontwarn jdk.javadoc.doclet.Taglet
+
+# ML Kit / Google Play services find their components through the manifest and reflection.
+# Shrinking them away makes on-device translation fail at runtime.
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_** { *; }
+-keep class com.google.android.gms.tasks.** { *; }
+-keep class com.google.firebase.components.** { *; }
+-keep class * implements com.google.firebase.components.ComponentRegistrar { *; }
+-keep class * implements com.google.firebase.components.ComponentRegistrar
+-dontwarn com.google.mlkit.**
+-dontwarn com.google.android.gms.**
+-keep class com.google.android.odml.** { *; }
+-keep class com.google.android.gms.common.internal.** { *; }
+-keepclassmembers class * extends com.google.mlkit.common.sdkinternal.MlKitContext { *; }

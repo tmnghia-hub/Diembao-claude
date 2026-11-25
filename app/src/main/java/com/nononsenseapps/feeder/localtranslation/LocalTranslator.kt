@@ -63,12 +63,6 @@ class LocalTranslator(
         preserveHtml: Boolean = false,
     ): TranslationResult =
         withContext(Dispatchers.IO) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                return@withContext TranslationResult.Error(
-                    content = application.getString(R.string.local_translation_requires_android_12),
-                )
-            }
-
             val text = prepareTextForLanguageDetection(content, preserveHtml)
             if (text.isBlank()) {
                 return@withContext TranslationResult.Success(
@@ -105,6 +99,13 @@ class LocalTranslator(
                 return@withContext mlKitResult
             }
 
+            // ML Kit works on every supported Android version, the engines below need Android 12
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                return@withContext TranslationResult.Error(
+                    content = withMlKitReason(application.getString(R.string.local_translation_requires_android_12)),
+                )
+            }
+
             val androidSystemResult =
                 if (preserveHtml) {
                     translateHtmlWithAndroidSystem(
@@ -120,22 +121,35 @@ class LocalTranslator(
                     )
                 }
 
-            if (androidSystemResult is TranslationResult.Success) {
-                androidSystemResult
-            } else if (preserveHtml) {
-                translateHtmlWithBergamot(
-                    html = content,
-                    sourceLang = sourceLang,
-                    targetLang = targetLang,
-                )
+            val finalResult =
+                if (androidSystemResult is TranslationResult.Success) {
+                    androidSystemResult
+                } else if (preserveHtml) {
+                    translateHtmlWithBergamot(
+                        html = content,
+                        sourceLang = sourceLang,
+                        targetLang = targetLang,
+                    )
+                } else {
+                    translatePlainTextWithBergamot(
+                        content = content,
+                        sourceLang = sourceLang,
+                        targetLang = targetLang,
+                    )
+                }
+            if (finalResult is TranslationResult.Error) {
+                finalResult.copy(content = withMlKitReason(finalResult.content))
             } else {
-                translatePlainTextWithBergamot(
-                    content = content,
-                    sourceLang = sourceLang,
-                    targetLang = targetLang,
-                )
+                finalResult
             }
         }
+
+    // Why ML Kit could not be used for the latest request. Shown together with the final error.
+    @Volatile
+    private var lastMlKitFailure: String? = null
+
+    private fun withMlKitReason(message: String): String =
+        lastMlKitFailure?.let { "$message\nML Kit: $it" } ?: message
 
     suspend fun canTranslateWithoutBergamotDownload(
         content: String,
@@ -266,19 +280,30 @@ class LocalTranslator(
         targetLang: String,
         preserveHtml: Boolean,
     ): TranslationResult? {
-        val mlKitSource = TranslateLanguage.fromLanguageTag(sourceLang) ?: return null
-        val mlKitTarget = TranslateLanguage.fromLanguageTag(targetLang) ?: return null
+        lastMlKitFailure = null
+        val mlKitSource =
+            TranslateLanguage.fromLanguageTag(sourceLang) ?: run {
+                lastMlKitFailure = "language '$sourceLang' is not supported"
+                return null
+            }
+        val mlKitTarget =
+            TranslateLanguage.fromLanguageTag(targetLang) ?: run {
+                lastMlKitFailure = "language '$targetLang' is not supported"
+                return null
+            }
 
-        val translator =
-            Translation.getClient(
-                TranslatorOptions
-                    .Builder()
-                    .setSourceLanguage(mlKitSource)
-                    .setTargetLanguage(mlKitTarget)
-                    .build(),
-            )
-
+        // Creating the client can itself fail (for example when ML Kit components are missing),
+        // so it must be inside the try. Any failure falls through to the next offline engine.
+        var translator: Translator? = null
         return try {
+            translator =
+                Translation.getClient(
+                    TranslatorOptions
+                        .Builder()
+                        .setSourceLanguage(mlKitSource)
+                        .setTargetLanguage(mlKitTarget)
+                        .build(),
+                )
             translator.downloadModelIfNeeded(DownloadConditions.Builder().build()).awaitResult()
             if (preserveHtml) {
                 translateHtmlWithMlKit(translator, content, sourceLang)
@@ -289,9 +314,14 @@ class LocalTranslator(
             throw e
         } catch (e: Exception) {
             logDebug(LOG_TAG, "ML Kit translation not available: ${e.message}")
+            lastMlKitFailure = e.message ?: e.javaClass.simpleName
             null
         } finally {
-            translator.close()
+            try {
+                translator?.close()
+            } catch (_: Exception) {
+                // Nothing to do if closing fails
+            }
         }
     }
 
