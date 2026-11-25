@@ -131,7 +131,8 @@ fun detectProviderFromKey(key: String): DetectedProvider? {
                 preferredModelHints = listOf("gemini-2.5-flash", "gpt-4o-mini", "flash", "mini"),
             )
 
-        trimmed.startsWith("AIza") ->
+        // Classic Gemini keys start with AIza, the newer ones from AI Studio start with AQ.
+        trimmed.startsWith("AIza") || trimmed.startsWith("AQ.") ->
             DetectedProvider(
                 name = "Google Gemini",
                 baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/",
