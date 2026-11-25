@@ -28,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OpenInBrowser
@@ -52,8 +53,10 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -69,6 +72,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nononsenseapps.feeder.R
+import com.nononsenseapps.feeder.openai.AiTranslationOptions
 import com.nononsenseapps.feeder.archmodel.TextToDisplay
 import com.nononsenseapps.feeder.db.room.ID_UNSET
 import com.nononsenseapps.feeder.localtranslation.BergamotModelDownloadProgress
@@ -231,6 +235,7 @@ fun ArticleScreen(
         onTranslate = {
             viewModel.translate()
         },
+        onTranslateWithAi = viewModel::translateWithAi,
         onOpenSystemTranslationSettings = {
             activityLauncher.startActivity(
                 openAdjacentIfSuitable = false,
@@ -276,6 +281,7 @@ fun ArticleScreen(
     onNavigateUp: () -> Unit,
     onSummarize: () -> Unit,
     onTranslate: () -> Unit,
+    onTranslateWithAi: (AiTranslationOptions) -> Unit = {},
     onOpenSystemTranslationSettings: () -> Unit,
     onDismissSystemTranslationSettings: () -> Unit,
     onDownloadBergamotRuntime: () -> Unit,
@@ -290,6 +296,7 @@ fun ArticleScreen(
     isAnimatedPaging: Boolean = false,
 ) {
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    var showAiTranslateDialog by remember { mutableStateOf(false) }
 
     val bottomBarVisibleState = remember { MutableTransitionState(viewState.isBottomBarVisible) }
     LaunchedEffect(viewState.isBottomBarVisible) {
@@ -427,6 +434,24 @@ fun ArticleScreen(
                                                     },
                                                 ),
                                             )
+                                        },
+                                    )
+                                }
+
+                                if (viewState.showTranslateWithAi) {
+                                    DropdownMenuItem(
+                                        onClick = {
+                                            onShowToolbarMenu(false)
+                                            showAiTranslateDialog = true
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.AutoAwesome,
+                                                contentDescription = null,
+                                            )
+                                        },
+                                        text = {
+                                            Text(stringResource(R.string.translate_with_ai))
                                         },
                                     )
                                 }
@@ -618,6 +643,16 @@ fun ArticleScreen(
             message = viewState.systemTranslationSettingsMessage,
             onOpenSettings = onOpenSystemTranslationSettings,
             onDismiss = onDismissSystemTranslationSettings,
+        )
+    }
+    if (showAiTranslateDialog) {
+        AiTranslateDialog(
+            initialOptions = viewState.aiTranslationOptions,
+            onConfirm = { options ->
+                showAiTranslateDialog = false
+                onTranslateWithAi(options)
+            },
+            onDismiss = { showAiTranslateDialog = false },
         )
     }
     if (viewState.showBergamotRuntimeDownloadPrompt) {

@@ -156,7 +156,7 @@ class OpenAIApiTest {
         val none = OpenAISettings()
 
         assertEquals(deepL, resolveEffectiveTranslationSettings(translationApi = deepL, llm = llm))
-        assertEquals(llm, resolveEffectiveTranslationSettings(translationApi = none, llm = llm))
+        assertTrue(resolveEffectiveTranslationSettings(translationApi = none, llm = llm).isLocalTranslation)
         assertTrue(resolveEffectiveTranslationSettings(translationApi = none, llm = none).isLocalTranslation)
     }
 

@@ -24,6 +24,7 @@ import com.nononsenseapps.feeder.db.room.ID_UNSET
 import com.nononsenseapps.feeder.db.room.RemoteFeed
 import com.nononsenseapps.feeder.db.room.SyncDevice
 import com.nononsenseapps.feeder.db.room.SyncRemote
+import com.nononsenseapps.feeder.openai.AiTranslationOptions
 import com.nononsenseapps.feeder.model.FeedUnreadCount
 import com.nononsenseapps.feeder.model.ThumbnailImage
 import com.nononsenseapps.feeder.sync.DeviceListResponse
@@ -378,6 +379,10 @@ class Repository(
     val effectiveTranslationSettings = settingsStore.effectiveTranslationSettings
 
     fun setTranslationApiSettings(value: TranslationApiSettings) = settingsStore.setTranslationApiSettings(value)
+
+    val aiTranslationOptions = settingsStore.aiTranslationOptions
+
+    fun setAiTranslationOptions(value: AiTranslationOptions) = settingsStore.setAiTranslationOptions(value)
 
     val preferredTranslationLanguage = settingsStore.preferredTranslationLanguage
 

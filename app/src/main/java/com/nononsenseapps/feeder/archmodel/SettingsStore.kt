@@ -10,6 +10,8 @@ import com.nononsenseapps.feeder.R
 import com.nononsenseapps.feeder.background.schedulePeriodicRssSync
 import com.nononsenseapps.feeder.db.room.BlocklistDao
 import com.nononsenseapps.feeder.db.room.ID_UNSET
+import com.nononsenseapps.feeder.openai.AiTranslationOptions
+import com.nononsenseapps.feeder.openai.TranslationStyle
 import com.nononsenseapps.feeder.openai.resolveEffectiveTranslationSettings
 import com.nononsenseapps.feeder.ui.compose.feedarticle.FeedListFilter
 import com.nononsenseapps.feeder.ui.compose.settings.FontSelection
@@ -615,6 +617,26 @@ class SettingsStore(
             .apply()
     }
 
+    private val _aiTranslationOptions =
+        MutableStateFlow(
+            AiTranslationOptions(
+                style = TranslationStyle.fromKey(sp.getString(PREF_AI_TRANSLATION_STYLE, null)),
+                customStyle = sp.getStringNonNull(PREF_AI_TRANSLATION_CUSTOM_STYLE, ""),
+                annotateTerms = sp.getBoolean(PREF_AI_TRANSLATION_ANNOTATE_TERMS, true),
+            ),
+        )
+    val aiTranslationOptions = _aiTranslationOptions.asStateFlow()
+
+    fun setAiTranslationOptions(value: AiTranslationOptions) {
+        _aiTranslationOptions.value = value
+        sp
+            .edit()
+            .putString(PREF_AI_TRANSLATION_STYLE, value.style.key)
+            .putString(PREF_AI_TRANSLATION_CUSTOM_STYLE, value.customStyle)
+            .putBoolean(PREF_AI_TRANSLATION_ANNOTATE_TERMS, value.annotateTerms)
+            .apply()
+    }
+
     private val _preferredTranslationLanguage =
         MutableStateFlow(
             sp.getStringNonNull(PREF_PREFERRED_TRANSLATION_LANGUAGE, ""),
@@ -792,6 +814,9 @@ const val PREF_OPENAI_AZURE_DEPLOYMENT_ID = "pref_openai_azure_deployment_id"
 const val PREF_OPENAI_REQUEST_TIMEOUT_SECONDS = "pref_openai_request_timeout_seconds"
 
 // Keep the legacy persisted key name for preference and OPML compatibility.
+const val PREF_AI_TRANSLATION_STYLE = "pref_ai_translation_style"
+const val PREF_AI_TRANSLATION_CUSTOM_STYLE = "pref_ai_translation_custom_style"
+const val PREF_AI_TRANSLATION_ANNOTATE_TERMS = "pref_ai_translation_annotate_terms"
 const val PREF_PREFERRED_TRANSLATION_LANGUAGE = "pref_openai_translation_language"
 const val PREF_TRANSLATION_API_KEY = "pref_translation_api_key"
 const val PREF_TRANSLATION_API_MODEL_ID = "pref_translation_api_model_id"

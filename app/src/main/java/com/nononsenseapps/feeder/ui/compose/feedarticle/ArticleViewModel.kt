@@ -47,6 +47,8 @@ import com.nononsenseapps.feeder.model.html.HtmlLinearizer
 import com.nononsenseapps.feeder.model.html.LinearArticle
 import com.nononsenseapps.feeder.openai.OpenAIApi
 import com.nononsenseapps.feeder.openai.canSummarize
+import com.nononsenseapps.feeder.openai.AiTranslationOptions
+import com.nononsenseapps.feeder.openai.TRANSLATION_PROVIDER_AI_PREFIX
 import com.nononsenseapps.feeder.openai.canUseAsTranslationApi
 import com.nononsenseapps.feeder.openai.isLocalTranslation
 import com.nononsenseapps.feeder.ui.compose.readaloud.SpeechHighlight
@@ -148,6 +150,9 @@ class ArticleViewModel(
     private val toolbarVisible = MutableStateFlow(state["toolbarMenuVisible"] ?: false)
     private val openAiSummary = MutableStateFlow<OpenAISummaryState>(OpenAISummaryState.Empty)
     private val showTranslatedContent = MutableStateFlow(false)
+
+    // Set while the shown translation was made by the AI model, so reloads keep the same style
+    private var activeAiOptions: AiTranslationOptions? = null
     private val translatedArticleContent = MutableStateFlow(LinearArticle(emptyList()))
     private val articleTranslationState = MutableStateFlow<ArticleTranslationState>(ArticleTranslationState.Empty)
     private var handledInitialOpenActions = false
@@ -179,6 +184,7 @@ class ArticleViewModel(
             bergamotModelManager.downloadProgress,
             podcastPlayerStateHolder.playerState,
             repository.useInAppAudioPlayer,
+            repository.aiTranslationOptions,
         ) { params ->
             val article = params[0] as Article?
             val textToDisplay = params[1] as TextToDisplay
@@ -201,6 +207,7 @@ class ArticleViewModel(
             val translationDownloadProgress = params[15] as BergamotModelDownloadProgress?
             val podcastPlayerState = params[16] as PodcastPlayerState
             val useInAppAudioPlayer = params[17] as Boolean
+            val aiTranslationOptions = params[18] as AiTranslationOptions
             val currentTranslation =
                 (translationState as? ArticleTranslationState.Result)
                     ?.takeIf { it.isFullText == isFullText }
@@ -243,6 +250,14 @@ class ArticleViewModel(
                 image = article?.image,
                 showSummarize = summarySettings.canSummarize && !article?.link.isNullOrEmpty(),
                 openAiSummary = openAiSummary,
+                showTranslateWithAi =
+                    summarySettings.canSummarize &&
+                        preferredTranslationLanguage.isNotBlank() &&
+                        !article?.link.isNullOrEmpty(),
+                aiTranslationOptions = aiTranslationOptions,
+                isShowingAiTranslation =
+                    isShowingTranslated &&
+                        currentTranslation.translatedBy.startsWith(TRANSLATION_PROVIDER_AI_PREFIX),
                 showTranslate = isShowingTranslated || (canRequestTranslation && alreadyInPreferredLanguage == null),
                 isShowingTranslated = isShowingTranslated,
                 isTranslationLoading = translationState is ArticleTranslationState.Loading,
@@ -631,11 +646,23 @@ class ArticleViewModel(
             showTranslatedContent.value = false
             return
         }
+        activeAiOptions = null
+        showTranslatedContent.value = true
+        translateCurrentArticle()
+    }
+
+    /**
+     * Translates with the AI model in the given style. The default offline translation is untouched.
+     */
+    fun translateWithAi(options: AiTranslationOptions) {
+        repository.setAiTranslationOptions(options)
+        activeAiOptions = options
         showTranslatedContent.value = true
         translateCurrentArticle()
     }
 
     private fun translateCurrentArticle() {
+        val aiOptions = activeAiOptions
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val targetLanguage = repository.preferredTranslationLanguage.value.trim()
@@ -647,34 +674,46 @@ class ArticleViewModel(
 
                 val article = articleFlow.value ?: return@launch
                 val fullText = isFullText
-                if (!repository.effectiveTranslationSettings.value.canUseAsTranslationApi) {
+                if (aiOptions == null && !repository.effectiveTranslationSettings.value.canUseAsTranslationApi) {
                     clearTranslatedContent()
                     return@launch
                 }
 
                 val html = loadArticleHtml(article, fullText)
-                val sourceLanguage =
-                    detectArticleAlreadyInPreferredLanguage(
-                        article = article,
-                        fullText = fullText,
-                        html = html,
-                    )
-                if (sourceLanguage != null) {
-                    setAlreadyInPreferredLanguage(
-                        sourceLanguage = sourceLanguage,
-                        isFullText = fullText,
-                    )
-                    return@launch
+                if (aiOptions == null) {
+                    val sourceLanguage =
+                        detectArticleAlreadyInPreferredLanguage(
+                            article = article,
+                            fullText = fullText,
+                            html = html,
+                        )
+                    if (sourceLanguage != null) {
+                        setAlreadyInPreferredLanguage(
+                            sourceLanguage = sourceLanguage,
+                            isFullText = fullText,
+                        )
+                        return@launch
+                    }
                 }
 
                 articleTranslationState.value = ArticleTranslationState.Loading
                 val translation =
-                    translationManager.getOrTranslateArticle(
-                        itemId = article.id,
-                        title = article.title,
-                        html = html,
-                        isFullText = fullText,
-                    ) ?: throw IllegalStateException("Translation failed")
+                    if (aiOptions != null) {
+                        translationManager.translateArticleWithAi(
+                            itemId = article.id,
+                            title = article.title,
+                            html = html,
+                            isFullText = fullText,
+                            options = aiOptions,
+                        )
+                    } else {
+                        translationManager.getOrTranslateArticle(
+                            itemId = article.id,
+                            title = article.title,
+                            html = html,
+                            isFullText = fullText,
+                        ) ?: throw IllegalStateException("Translation failed")
+                    }
 
                 translatedArticleContent.value =
                     HtmlLinearizer(
@@ -750,7 +789,15 @@ class ArticleViewModel(
         article: Article,
         fullText: Boolean,
     ): ArticleTranslation =
-        translationManager.getOrTranslateArticle(
+        activeAiOptions?.let { options ->
+            translationManager.translateArticleWithAi(
+                itemId = article.id,
+                title = article.title,
+                html = loadArticleHtml(article, fullText),
+                isFullText = fullText,
+                options = options,
+            )
+        } ?: translationManager.getOrTranslateArticle(
             itemId = article.id,
             title = article.title,
             html = loadArticleHtml(article, fullText),
@@ -952,6 +999,9 @@ private data class ArticleState(
     override val image: ThumbnailImage? = null,
     override val showSummarize: Boolean = false,
     override val openAiSummary: OpenAISummaryState = OpenAISummaryState.Empty,
+    override val showTranslateWithAi: Boolean = false,
+    override val aiTranslationOptions: AiTranslationOptions = AiTranslationOptions(),
+    override val isShowingAiTranslation: Boolean = false,
     override val showTranslate: Boolean = false,
     override val isShowingTranslated: Boolean = false,
     override val isTranslationLoading: Boolean = false,
@@ -990,6 +1040,9 @@ interface ArticleScreenViewState {
     val image: ThumbnailImage?
     val showSummarize: Boolean
     val openAiSummary: OpenAISummaryState
+    val showTranslateWithAi: Boolean
+    val aiTranslationOptions: AiTranslationOptions
+    val isShowingAiTranslation: Boolean
     val showTranslate: Boolean
     val isShowingTranslated: Boolean
     val isTranslationLoading: Boolean

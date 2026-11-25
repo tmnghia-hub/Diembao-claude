@@ -224,6 +224,7 @@ class OpenAIApi(
         targetLanguage: String,
         settings: OpenAISettings,
         preserveHtml: Boolean = false,
+        options: AiTranslationOptions? = null,
     ): TranslationResult {
         if (settings.isDeepL) {
             return translateWithDeepL(
@@ -241,6 +242,7 @@ class OpenAIApi(
             content = content,
             targetLanguage = targetLanguage,
             preserveHtml = preserveHtml,
+            options = options,
         )
     }
 
@@ -249,6 +251,7 @@ class OpenAIApi(
         content: String,
         targetLanguage: String,
         preserveHtml: Boolean,
+        options: AiTranslationOptions?,
     ): TranslationResult =
         try {
             var detectedLanguage = ""
@@ -261,6 +264,7 @@ class OpenAIApi(
                             content = chunk,
                             targetLanguage = targetLanguage,
                             preserveHtml = preserveHtml,
+                            options = options,
                         )
                     if (detectedLanguage.isBlank()) {
                         detectedLanguage = lang
@@ -281,10 +285,11 @@ class OpenAIApi(
         content: String,
         targetLanguage: String,
         preserveHtml: Boolean,
+        options: AiTranslationOptions?,
     ): Pair<String, String> {
         val response =
             openAIClientFactory(settings).chatCompletion(
-                request = translationRequest(content, targetLanguage, settings, preserveHtml),
+                request = translationRequest(content, targetLanguage, settings, preserveHtml, options),
                 requestOptions = null,
             )
         val text =
@@ -364,6 +369,7 @@ class OpenAIApi(
         targetLanguage: String,
         settings: OpenAISettings,
         preserveHtml: Boolean,
+        options: AiTranslationOptions? = null,
     ): ChatCompletionRequest =
         ChatCompletionRequest(
             model = ModelId(id = settings.modelId),
@@ -374,10 +380,19 @@ class OpenAIApi(
                         messageContent =
                             TextContent(
                                 listOfNotNull(
-                                    "You are a professional news translator working for a newspaper.",
+                                    "You are a professional translator.",
                                     "Translate the user's text into the language '$targetLanguage'.",
-                                    "Write natural, fluent editorial prose the way a native-speaking journalist would, not word for word.",
-                                    "Keep the meaning, tone and facts exactly. Never add, omit or explain anything.",
+                                    options?.styleInstruction
+                                        ?: "Write natural, fluent editorial prose the way a native-speaking journalist would, not word for word.",
+                                    if (options?.annotateTerms == true && preserveHtml) glossaryInstruction(targetLanguage) else null,
+                                    when {
+                                        options?.annotateTerms == true && preserveHtml ->
+                                            "Keep the meaning and facts exactly. Never add or omit information, except for the term annotations described above."
+                                        options != null ->
+                                            "Keep the meaning and facts exactly. Never add, omit or explain anything."
+                                        else ->
+                                            "Keep the meaning, tone and facts exactly. Never add, omit or explain anything."
+                                    },
                                     "Keep people, places, organisations, brands, numbers, dates, units and quotations accurate.",
                                     "Keep names in their original form unless a widely used translated form exists.",
                                     "Use consistent terminology throughout the text.",
@@ -543,6 +558,9 @@ val OpenAISettings.isAzure: Boolean
 val OpenAISettings.isPerplexity: Boolean
     get() = baseUrl.contains("api.perplexity.ai", ignoreCase = true)
 
+val OpenAISettings.isGemini: Boolean
+    get() = baseUrl.contains("generativelanguage.googleapis.com", ignoreCase = true)
+
 val OpenAISettings.isDeepL: Boolean
     get() = baseUrl.contains("deepl.com", ignoreCase = true)
 
@@ -592,8 +610,8 @@ fun isOfflineTranslationProvider(provider: String): Boolean = provider == TRANSL
 /**
  * Translation priority:
  * 1. A configured translation API (DeepL)
- * 2. A configured AI model (the key entered under AI features)
- * 3. Offline translation
+ * 2. Offline translation (ML Kit / Bergamot)
+ * The AI model key is used only by the explicit "translate with AI" action.
  */
 fun resolveEffectiveTranslationSettings(
     translationApi: OpenAISettings,
@@ -601,7 +619,8 @@ fun resolveEffectiveTranslationSettings(
 ): OpenAISettings =
     when {
         translationApi.canTranslate && !translationApi.isLocalTranslation -> translationApi
-        llm.canSummarize -> llm
+        // The AI model is never used automatically. It translates only when the reader asks for it
+        // with the "translate with AI" button, so the default stays free and offline.
         else -> OpenAISettings(baseUrl = LOCAL_TRANSLATION_PROVIDER_URL)
     }
 
@@ -623,11 +642,16 @@ fun OpenAISettings.toOpenAIHost(withAzureDeploymentId: Boolean): OpenAIHost =
                     URLBuilder()
                         .takeFrom(baseUrl)
                         .also {
-                            it.appendPathSegments("openai")
-                            if (withAzureDeploymentId && azureDeploymentId.isNotBlank()) {
+                            // Azure and the legacy Gemini address (.../v1beta) need the extra /openai segment.
+                            // Other OpenAI compatible hosts (OpenRouter, Anthropic, Groq...) use the address as entered.
+                            if (isAzure || (isGemini && !baseUrl.contains("/openai"))) {
+                                it.appendPathSegments("openai")
+                            }
+                            if (isAzure && withAzureDeploymentId && azureDeploymentId.isNotBlank()) {
                                 it.appendPathSegments("deployments", azureDeploymentId)
                             }
-                        }.buildString(),
+                        }.buildString()
+                        .let { built -> if (isAzure || built.endsWith("/")) built else "$built/" },
                 queryParams =
                     azureApiVersion.let { apiVersion ->
                         if (apiVersion.isEmpty()) emptyMap() else mapOf("api-version" to apiVersion)

@@ -1,15 +1,19 @@
 package com.nononsenseapps.feeder.model
 
 import android.app.Application
+import com.nononsenseapps.feeder.R
 import com.nononsenseapps.feeder.archmodel.OpenAISettings
 import com.nononsenseapps.feeder.archmodel.Repository
 import com.nononsenseapps.feeder.archmodel.TranslationApiSettings
 import com.nononsenseapps.feeder.localtranslation.LocalTranslator
+import com.nononsenseapps.feeder.openai.AiTranslationOptions
 import com.nononsenseapps.feeder.openai.OpenAIApi
 import com.nononsenseapps.feeder.openai.OpenAIApi.TranslationResult
 import com.nononsenseapps.feeder.openai.OpenAIApi.TranslationResult.ErrorAction
 import com.nononsenseapps.feeder.openai.TRANSLATION_PROVIDER_OFFLINE
+import com.nononsenseapps.feeder.openai.canSummarize
 import com.nononsenseapps.feeder.openai.canTranslate
+import com.nononsenseapps.feeder.openai.translationProviderKey
 import com.nononsenseapps.feeder.openai.isDeepL
 import com.nononsenseapps.feeder.openai.isLocalTranslation
 import com.nononsenseapps.feeder.openai.isOfflineTranslationProvider
@@ -399,6 +403,124 @@ class TranslationManager(
             )
         }
 
+
+    /**
+     * Translates an article with the AI model, in the style the reader picked. Only called when the
+     * reader explicitly asks for it. Unlike the default flow it never falls back to offline
+     * translation, because the whole point is the style, and errors are shown to the reader.
+     */
+    suspend fun translateArticleWithAi(
+        itemId: Long,
+        title: String,
+        html: String,
+        isFullText: Boolean,
+        options: AiTranslationOptions,
+    ): ArticleTranslation =
+        withContext(Dispatchers.IO) {
+            val settings = repository.openAISettings.value
+            val targetLanguage = repository.preferredTranslationLanguage.value.trim()
+            if (!settings.canSummarize) {
+                throw IllegalStateException(application.getString(R.string.ai_translate_needs_key))
+            }
+            if (targetLanguage.isBlank() || html.isBlank()) {
+                throw IllegalStateException(application.getString(R.string.set_translation_language_first))
+            }
+
+            val variant = "ai-${settings.modelId.hashCode().toUInt().toString(16)}-${options.cacheKey}"
+            val cache = loadCache(itemId, settings, targetLanguage, variant)
+            val titleHash = sha256(title)
+            val htmlHash = sha256(html)
+            val cachedHtml =
+                if (isFullText) {
+                    cache.translatedFullArticleHtml.takeIf { cache.fullArticleHtmlHash == htmlHash }
+                } else {
+                    cache.translatedArticleHtml.takeIf { cache.articleHtmlHash == htmlHash }
+                }
+            val cachedTitle = cache.translatedTitle.takeIf { cache.titleHash == titleHash && !it.isNullOrBlank() }
+            if (cachedHtml != null && cachedTitle != null) {
+                return@withContext ArticleTranslation(
+                    translatedTitle = cachedTitle,
+                    translatedHtml = cachedHtml,
+                    sourceLanguage = cache.sourceLanguage,
+                    translatedBy = cache.translatedBy.ifBlank { settings.translationProviderKey },
+                )
+            }
+
+            fun failure(result: TranslationResult.Error): Nothing = throw IllegalStateException(result.content.ifBlank { "AI translation failed" })
+
+            val htmlResult =
+                if (cachedHtml != null) {
+                    null
+                } else {
+                    when (
+                        val result =
+                            openAIApi.translate(
+                                content = html,
+                                targetLanguage = targetLanguage,
+                                settings = settings,
+                                preserveHtml = true,
+                                options = options,
+                            )
+                    ) {
+                        is TranslationResult.Success -> result
+                        is TranslationResult.Error -> failure(result)
+                    }
+                }
+            val titleResult =
+                if (cachedTitle != null) {
+                    null
+                } else {
+                    // Titles are short, so no term annotations there
+                    when (
+                        val result =
+                            openAIApi.translate(
+                                content = title,
+                                targetLanguage = targetLanguage,
+                                settings = settings,
+                                preserveHtml = false,
+                                options = options.copy(annotateTerms = false),
+                            )
+                    ) {
+                        is TranslationResult.Success -> result
+                        is TranslationResult.Error -> failure(result)
+                    }
+                }
+
+            val translatedHtml = cachedHtml ?: htmlResult?.content.orEmpty().ifBlank { html }
+            val translatedTitle = cachedTitle ?: titleResult?.content.orEmpty().ifBlank { title }
+            val sourceLanguage =
+                htmlResult
+                    ?.detectedLanguage
+                    .orEmpty()
+                    .ifBlank { titleResult?.detectedLanguage.orEmpty() }
+                    .ifBlank { cache.sourceLanguage }
+            val translatedBy = settings.translationProviderKey
+
+            saveCache(
+                itemId,
+                settings,
+                targetLanguage,
+                cache.copy(
+                    sourceLanguage = sourceLanguage,
+                    translatedBy = translatedBy,
+                    titleHash = titleHash,
+                    translatedTitle = translatedTitle,
+                    articleHtmlHash = if (!isFullText) htmlHash else cache.articleHtmlHash,
+                    translatedArticleHtml = if (!isFullText) translatedHtml else cache.translatedArticleHtml,
+                    fullArticleHtmlHash = if (isFullText) htmlHash else cache.fullArticleHtmlHash,
+                    translatedFullArticleHtml = if (isFullText) translatedHtml else cache.translatedFullArticleHtml,
+                ),
+                variant,
+            )
+
+            ArticleTranslation(
+                translatedTitle = translatedTitle,
+                translatedHtml = translatedHtml,
+                sourceLanguage = sourceLanguage,
+                translatedBy = translatedBy,
+            )
+        }
+
     suspend fun hasCachedTranslatedArticle(
         itemId: Long,
         title: String,
@@ -460,8 +582,9 @@ class TranslationManager(
         itemId: Long,
         settings: OpenAISettings,
         targetLanguage: String,
+        variant: String = "",
     ): CachedTranslations =
-        cacheFile(itemId, settings, targetLanguage)
+        cacheFile(itemId, settings, targetLanguage, variant)
             .takeIf(File::isFile)
             ?.readText()
             ?.let { runCatching { json.decodeFromString<CachedTranslations>(it) }.getOrNull() }
@@ -472,8 +595,9 @@ class TranslationManager(
         settings: OpenAISettings,
         targetLanguage: String,
         cache: CachedTranslations,
+        variant: String = "",
     ) {
-        val file = cacheFile(itemId, settings, targetLanguage)
+        val file = cacheFile(itemId, settings, targetLanguage, variant)
         file.parentFile?.mkdirs()
         file.writeText(json.encodeToString(CachedTranslations.serializer(), cache))
     }
@@ -482,6 +606,7 @@ class TranslationManager(
         itemId: Long,
         settings: OpenAISettings,
         targetLanguage: String,
+        variant: String = "",
     ): File {
         val provider =
             when {
@@ -492,7 +617,7 @@ class TranslationManager(
         return filePathProvider.cacheDir
             .resolve("translations")
             .resolve(
-                "$itemId.$provider.${
+                "$itemId.$provider${if (variant.isBlank()) "" else ".$variant"}.${
                     targetLanguage
                         .trim()
                         .lowercase()

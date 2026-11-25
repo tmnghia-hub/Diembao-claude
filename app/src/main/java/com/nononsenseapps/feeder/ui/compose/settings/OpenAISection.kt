@@ -59,6 +59,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.aallam.openai.client.OpenAIHost
 import com.nononsenseapps.feeder.R
+import com.nononsenseapps.feeder.openai.detectProviderFromKey
+import com.nononsenseapps.feeder.openai.pickModel
 import com.nononsenseapps.feeder.archmodel.OpenAISettings
 import com.nononsenseapps.feeder.openai.LOCAL_TRANSLATION_PROVIDER_URL
 import com.nononsenseapps.feeder.openai.canUseAsTranslationApi
@@ -101,7 +103,18 @@ fun OpenAISection(
     if (state.isEditMode) {
         var current by remember(section, state.settings) { mutableStateOf(sanitizedSettings) }
         var currentPreferredTranslationLanguage by remember(preferredTranslationLanguage) { mutableStateOf(preferredTranslationLanguage) }
-        var provider by remember(section, state.settings) { mutableStateOf(AIProviderPreset.fromSettings(sanitizedSettings)) }
+        var provider by remember(section, state.settings) {
+            mutableStateOf(
+                AIProviderPreset.fromSettings(sanitizedSettings).let { preset ->
+                    // Lets the reader simply paste an API key: the provider is detected from the key
+                    if (preset == AIProviderPreset.NONE && section == OpenAISectionType.Summary) {
+                        AIProviderPreset.OPENAI_COMPATIBLE
+                    } else {
+                        preset
+                    }
+                },
+            )
+        }
         val context = LocalContext.current
         val matchingModelsResult =
             remember(current, state.modelsResult) {
@@ -302,6 +315,26 @@ private fun OpenAISectionEdit(
         }
     }
 
+    // What was filled in automatically from the API key: base URL and model
+    var autoFilled by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val detectedProvider = remember(current.key) { detectProviderFromKey(current.key) }
+
+    // Once the real list of models is known, prefer a fast and cheap one over the built-in default
+    LaunchedEffect(modelsResult, detectedProvider) {
+        val auto = autoFilled
+        if (detectedProvider != null &&
+            auto != null &&
+            modelsResult is OpenAIModelsState.Success &&
+            current.modelId == auto.second
+        ) {
+            val picked = detectedProvider.pickModel(modelsResult.ids)
+            if (picked != null && picked != current.modelId) {
+                autoFilled = auto.first to picked
+                latestOnEvent(OpenAISettingsEvent.UpdateSettings(current.copy(modelId = picked)))
+            }
+        }
+    }
+
     var modelsMenuExpanded by remember { mutableStateOf(false) }
     var providerMenuExpanded by remember { mutableStateOf(false) }
     var translationLanguageMenuExpanded by remember { mutableStateOf(false) }
@@ -382,9 +415,36 @@ private fun OpenAISectionEdit(
                             focusManager.moveFocus(focusDirection = FocusDirection.Down)
                         },
                     ),
-                onValueChange = {
-                    onEvent(OpenAISettingsEvent.UpdateSettings(current.copy(key = it)))
+                onValueChange = { newKey ->
+                    var updated = current.copy(key = newKey.trim())
+                    val detected = detectProviderFromKey(newKey)
+                    if (detected != null && !provider.isDeepL && provider != AIProviderPreset.AZURE_OPENAI) {
+                        // Fill in only what the reader did not choose themselves
+                        val previous = autoFilled
+                        val urlIsAuto = current.baseUrl.isBlank() || current.baseUrl == previous?.first
+                        val modelIsAuto = current.modelId.isBlank() || current.modelId == previous?.second
+                        updated =
+                            updated.copy(
+                                baseUrl = if (urlIsAuto) detected.baseUrl else current.baseUrl,
+                                modelId = if (modelIsAuto) detected.defaultModel else current.modelId,
+                            )
+                        autoFilled =
+                            (if (urlIsAuto) detected.baseUrl else previous?.first.orEmpty()) to
+                            (if (modelIsAuto) detected.defaultModel else previous?.second.orEmpty())
+                    }
+                    onEvent(OpenAISettingsEvent.UpdateSettings(updated))
                 },
+                supportingText =
+                    if (provider.isDeepL) {
+                        null
+                    } else {
+                        {
+                            Text(
+                                detectedProvider?.let { stringResource(R.string.ai_key_detected, it.name) }
+                                    ?: stringResource(R.string.ai_key_auto_hint),
+                            )
+                        }
+                    },
                 visualTransformation = VisualTransformationApiKey(),
             )
         }

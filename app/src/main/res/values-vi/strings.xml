@@ -264,4 +264,18 @@
     <string name="app_update_needs_permission">Hãy cho phép ứng dụng này cài ứng dụng ở màn hình vừa mở, rồi chạm vào đây lần nữa</string>
     <string name="app_update_not_configured">Bản này không có nguồn cập nhật. Hãy build bằng workflow GitHub để dùng tính năng này</string>
     <string name="app_update_error">Cập nhật thất bại: %1$s. Chạm để thử lại</string>
+  <string name="translate_with_ai">Dịch bằng AI</string>
+  <string name="ai_translate_action">Dịch</string>
+  <string name="ai_translate_style_label">Văn phong</string>
+  <string name="ai_style_news">Báo chí</string>
+  <string name="ai_style_scientific">Khoa học</string>
+  <string name="ai_style_simple">Dễ hiểu</string>
+  <string name="ai_style_formal">Trang trọng</string>
+  <string name="ai_style_custom">Tự nhập</string>
+  <string name="ai_style_custom_hint">Mô tả văn phong, ví dụ: sinh động như tạp chí khoa học đại chúng</string>
+  <string name="ai_annotate_terms">Chú giải thuật ngữ chuyên ngành</string>
+  <string name="ai_annotate_terms_summary">Giữ thuật ngữ gốc kèm giải thích ngắn bên cạnh</string>
+  <string name="ai_translate_needs_key">Hãy nhập API key trong phần cài đặt AI để dịch bằng AI</string>
+  <string name="ai_key_detected">Đã nhận diện: %1$s. Base URL và model đã được điền sẵn</string>
+  <string name="ai_key_auto_hint">Chỉ cần dán API key, nhà cung cấp và model sẽ tự điền</string>
 </resources>

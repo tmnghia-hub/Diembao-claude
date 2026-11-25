@@ -447,4 +447,18 @@
   <string name="app_update_needs_permission">Allow this app to install apps in the screen that opened, then tap here again</string>
   <string name="app_update_not_configured">This build has no update source. Build it with the GitHub workflow to enable updates</string>
   <string name="app_update_error">Update failed: %1$s. Tap to retry</string>
+  <string name="translate_with_ai">Translate with AI</string>
+  <string name="ai_translate_action">Translate</string>
+  <string name="ai_translate_style_label">Writing style</string>
+  <string name="ai_style_news">News</string>
+  <string name="ai_style_scientific">Scientific</string>
+  <string name="ai_style_simple">Easy to understand</string>
+  <string name="ai_style_formal">Formal</string>
+  <string name="ai_style_custom">Custom</string>
+  <string name="ai_style_custom_hint">Describe the style, e.g. lively, like a popular science magazine</string>
+  <string name="ai_annotate_terms">Explain specialised terms</string>
+  <string name="ai_annotate_terms_summary">Keeps the original term with a short explanation next to it</string>
+  <string name="ai_translate_needs_key">Add an API key under AI settings to translate with AI</string>
+  <string name="ai_key_detected">Detected: %1$s. Base URL and model were filled in for you</string>
+  <string name="ai_key_auto_hint">Just paste your API key. The provider and model are filled in automatically</string>
 </resources>
