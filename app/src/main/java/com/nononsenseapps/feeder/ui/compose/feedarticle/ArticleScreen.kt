@@ -1,5 +1,8 @@
 package com.nononsenseapps.feeder.ui.compose.feedarticle
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
@@ -166,6 +169,8 @@ fun ArticleScreen(
     }
 
     val toolbarColor = MaterialTheme.colorScheme.surface.toArgb()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     ArticleScreen(
         viewState = viewState,
@@ -236,6 +241,30 @@ fun ArticleScreen(
             viewModel.translate()
         },
         onTranslateWithAi = viewModel::translateWithAi,
+        onShareToAiAssistant = { options ->
+            scope.launch {
+                val message = viewModel.prepareAiAssistantMessage(options) ?: return@launch
+                val chooser =
+                    Intent.createChooser(
+                        Intent(Intent.ACTION_SEND).apply {
+                            putExtra(Intent.EXTRA_TEXT, message)
+                            type = "text/plain"
+                        },
+                        null,
+                    )
+                try {
+                    activityLauncher.startActivity(
+                        openAdjacentIfSuitable = false,
+                        intent = chooser,
+                    )
+                } catch (e: Exception) {
+                    // Very long articles can be too big to pass between apps, so hand over via the clipboard
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("article", message))
+                    Toast.makeText(context, R.string.ai_assistant_copied, Toast.LENGTH_LONG).show()
+                }
+            }
+        },
         onOpenSystemTranslationSettings = {
             activityLauncher.startActivity(
                 openAdjacentIfSuitable = false,
@@ -282,6 +311,7 @@ fun ArticleScreen(
     onSummarize: () -> Unit,
     onTranslate: () -> Unit,
     onTranslateWithAi: (AiTranslationOptions) -> Unit = {},
+    onShareToAiAssistant: (AiTranslationOptions) -> Unit = {},
     onOpenSystemTranslationSettings: () -> Unit,
     onDismissSystemTranslationSettings: () -> Unit,
     onDownloadBergamotRuntime: () -> Unit,
@@ -297,6 +327,7 @@ fun ArticleScreen(
 ) {
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     var showAiTranslateDialog by remember { mutableStateOf(false) }
+    var showAiShareDialog by remember { mutableStateOf(false) }
 
     val bottomBarVisibleState = remember { MutableTransitionState(viewState.isBottomBarVisible) }
     LaunchedEffect(viewState.isBottomBarVisible) {
@@ -452,6 +483,24 @@ fun ArticleScreen(
                                         },
                                         text = {
                                             Text(stringResource(R.string.translate_with_ai))
+                                        },
+                                    )
+                                }
+
+                                if (!viewState.articleLink.isNullOrEmpty()) {
+                                    DropdownMenuItem(
+                                        onClick = {
+                                            onShowToolbarMenu(false)
+                                            showAiShareDialog = true
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Share,
+                                                contentDescription = null,
+                                            )
+                                        },
+                                        text = {
+                                            Text(stringResource(R.string.ai_assistant_share))
                                         },
                                     )
                                 }
@@ -653,6 +702,18 @@ fun ArticleScreen(
                 onTranslateWithAi(options)
             },
             onDismiss = { showAiTranslateDialog = false },
+        )
+    }
+    if (showAiShareDialog) {
+        AiTranslateDialog(
+            initialOptions = viewState.aiTranslationOptions,
+            title = stringResource(R.string.ai_assistant_share),
+            confirmText = stringResource(R.string.ai_assistant_share_action),
+            onConfirm = { options ->
+                showAiShareDialog = false
+                onShareToAiAssistant(options)
+            },
+            onDismiss = { showAiShareDialog = false },
         )
     }
     if (viewState.showBergamotRuntimeDownloadPrompt) {

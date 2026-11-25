@@ -38,6 +38,8 @@ fun AiTranslateDialog(
     initialOptions: AiTranslationOptions,
     onConfirm: (AiTranslationOptions) -> Unit,
     onDismiss: () -> Unit,
+    title: String = stringResource(R.string.translate_with_ai),
+    confirmText: String = stringResource(R.string.ai_translate_action),
 ) {
     var style by remember { mutableStateOf(initialOptions.style) }
     var customStyle by remember { mutableStateOf(initialOptions.customStyle) }
@@ -46,7 +48,7 @@ fun AiTranslateDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.translate_with_ai)) },
+        title = { Text(title) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -118,7 +120,7 @@ fun AiTranslateDialog(
                     )
                 },
             ) {
-                Text(stringResource(R.string.ai_translate_action))
+                Text(confirmText)
             }
         },
         dismissButton = {

@@ -48,6 +48,9 @@ import com.nononsenseapps.feeder.model.html.LinearArticle
 import com.nononsenseapps.feeder.openai.OpenAIApi
 import com.nononsenseapps.feeder.openai.canSummarize
 import com.nononsenseapps.feeder.openai.AiTranslationOptions
+import com.nononsenseapps.feeder.util.stripTrackingParameters
+import com.nononsenseapps.feeder.openai.buildAiAssistantMessage
+import com.nononsenseapps.feeder.openai.htmlToPlainText
 import com.nononsenseapps.feeder.openai.TRANSLATION_PROVIDER_AI_PREFIX
 import com.nononsenseapps.feeder.openai.canUseAsTranslationApi
 import com.nononsenseapps.feeder.openai.isLocalTranslation
@@ -659,6 +662,34 @@ class ArticleViewModel(
         activeAiOptions = options
         showTranslatedContent.value = true
         translateCurrentArticle()
+    }
+
+    /**
+     * Builds the text sent to an AI assistant app: a prompt plus the complete article.
+     * Returns null (after telling the reader) when the article cannot be loaded.
+     */
+    suspend fun prepareAiAssistantMessage(options: AiTranslationOptions): String? {
+        val article = articleFlow.value ?: return null
+        repository.setAiTranslationOptions(options)
+        return try {
+            val html = loadArticleHtml(article, isFullText)
+            val plainText = withContext(Dispatchers.Default) { htmlToPlainText(html) }
+            if (plainText.isBlank()) {
+                toastMaker.makeToast(R.string.ai_assistant_empty_article)
+                null
+            } else {
+                buildAiAssistantMessage(
+                    title = article.title,
+                    link = article.link?.let { stripTrackingParameters(it) },
+                    plainText = plainText,
+                    targetLanguage = repository.preferredTranslationLanguage.value,
+                    options = options,
+                )
+            }
+        } catch (e: Exception) {
+            toastMaker.makeToast(e.message ?: "Cannot load article")
+            null
+        }
     }
 
     private fun translateCurrentArticle() {

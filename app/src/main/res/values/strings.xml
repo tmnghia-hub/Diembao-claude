@@ -461,4 +461,8 @@
   <string name="ai_translate_needs_key">Add an API key under AI settings to translate with AI</string>
   <string name="ai_key_detected">Detected: %1$s. Base URL and model were filled in for you</string>
   <string name="ai_key_auto_hint">Just paste your API key. The provider and model are filled in automatically</string>
+  <string name="ai_assistant_share">Send to AI assistant</string>
+  <string name="ai_assistant_share_action">Send</string>
+  <string name="ai_assistant_empty_article">The article has no text to send</string>
+  <string name="ai_assistant_copied">The article is too long to share directly. It was copied, paste it into your AI app</string>
 </resources>
