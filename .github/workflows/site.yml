@@ -1,0 +1,79 @@
+name: Build web reader
+
+# Tạo trang web đọc tin (GitHub Pages) từ web/feeds.opml.
+# Chạy tự động mỗi 3 giờ, khi bạn sửa thư mục web/, hoặc chạy tay: Actions -> Build web reader -> Run workflow
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/site.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Khóa và mật khẩu nằm trong Settings -> Secrets and variables -> Actions, KHÔNG viết vào code
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+      # Mặc định bắt buộc có mật khẩu. Muốn đăng công khai: tạo variable REQUIRE_PASSWORD = false
+      REQUIRE_PASSWORD: ${{ vars.REQUIRE_PASSWORD || 'true' }}
+      SITE_TITLE: ${{ vars.SITE_TITLE }}
+      TARGET_LANGUAGE: ${{ vars.TARGET_LANGUAGE }}
+      TRANSLATION_STYLE: ${{ vars.TRANSLATION_STYLE }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install encryption library
+        if: env.SITE_PASSWORD != ''
+        run: pip install cryptography
+
+      # Nhớ các bản dịch đã có để không dịch lại (tiết kiệm hạn mức Gemini)
+      - name: restore translation cache
+        uses: actions/cache@v4
+        with:
+          path: web/.cache
+          key: translations-${{ github.run_id }}
+          restore-keys: translations-
+
+      - name: build site
+        run: python web/build.py
+
+      - name: configure pages
+        uses: actions/configure-pages@v5
+
+      - name: upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

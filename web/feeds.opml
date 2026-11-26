@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<opml version="2.0">
+  <head>
+    <title>Tong Hop RSS Khoa Hoc - Lich Su - Xa Hoi - Huyen Bi (EN &amp; VN)</title>
+  </head>
+  <body>
+    <outline text="EN - Science &amp; Research" title="EN - Science &amp; Research">
+      <outline type="rss" text="Quanta Magazine" title="Quanta Magazine" xmlUrl="https://www.quantamagazine.org/feed/" htmlUrl="https://www.quantamagazine.org/"/>
+      <outline type="rss" text="ScienceDaily - Top Science" title="ScienceDaily - Top Science" xmlUrl="https://www.sciencedaily.com/rss/top/science.xml" htmlUrl="https://www.sciencedaily.com/"/>
+      <outline type="rss" text="Phys.org" title="Phys.org" xmlUrl="https://phys.org/rss-feed/" htmlUrl="https://phys.org/"/>
+      <outline type="rss" text="ScienceAlert" title="ScienceAlert" xmlUrl="https://www.sciencealert.com/feed" htmlUrl="https://www.sciencealert.com/"/>
+    </outline>
+    <outline text="EN - Nature, Space &amp; Biology" title="EN - Nature, Space &amp; Biology">
+      <outline type="rss" text="Live Science" title="Live Science" xmlUrl="https://www.livescience.com/feeds/all" htmlUrl="https://www.livescience.com/"/>
+      <outline type="rss" text="Space.com" title="Space.com" xmlUrl="https://www.space.com/feeds/all" htmlUrl="https://www.space.com/"/>
+      <outline type="rss" text="ScienceDaily - Earth &amp; Climate" title="ScienceDaily - Earth &amp; Climate" xmlUrl="https://www.sciencedaily.com/rss/earth_climate.xml" htmlUrl="https://www.sciencedaily.com/news/earth_climate/"/>
+    </outline>
+    <outline text="EN - History &amp; Archaeology" title="EN - History &amp; Archaeology">
+      <outline type="rss" text="Smithsonian Magazine - History" title="Smithsonian Magazine - History" xmlUrl="https://www.smithsonianmag.com/rss/history/" htmlUrl="https://www.smithsonianmag.com/category/history/"/>
+      <outline type="rss" text="Archaeology Magazine" title="Archaeology Magazine" xmlUrl="https://archaeology.org/feed/" htmlUrl="https://archaeology.org/"/>
+      <outline type="rss" text="World History Encyclopedia" title="World History Encyclopedia" xmlUrl="https://www.worldhistory.org/rss/" htmlUrl="https://www.worldhistory.org/"/>
+    </outline>
+    <outline text="EN - Social Sciences &amp; Psychology" title="EN - Social Sciences &amp; Psychology">
+      <outline type="rss" text="PsyPost" title="PsyPost" xmlUrl="https://www.psypost.org/feed" htmlUrl="https://www.psypost.org/"/>
+      <outline type="rss" text="SAPIENS" title="SAPIENS" xmlUrl="https://www.sapiens.org/feed/" htmlUrl="https://www.sapiens.org/"/>
+      <outline type="rss" text="Aeon" title="Aeon" xmlUrl="https://aeon.co/feed.rss" htmlUrl="https://aeon.co/"/>
+      <outline type="rss" text="ScienceDaily - Mind &amp; Brain" title="ScienceDaily - Mind &amp; Brain" xmlUrl="https://www.sciencedaily.com/rss/mind_brain.xml" htmlUrl="https://www.sciencedaily.com/news/mind_brain/"/>
+    </outline>
+    <outline text="EN - Unexplained Mysteries &amp; Strange Phenomena" title="EN - Unexplained Mysteries &amp; Strange Phenomena">
+      <outline type="rss" text="Atlas Obscura" title="Atlas Obscura" xmlUrl="https://www.atlasobscura.com/feeds/latest" htmlUrl="https://www.atlasobscura.com/"/>
+      <outline type="rss" text="Live Science - Strange News" title="Live Science - Strange News" xmlUrl="https://www.livescience.com/feeds/tag/strange-news" htmlUrl="https://www.livescience.com/news/strange-news"/>
+      <outline type="rss" text="Ancient Origins" title="Ancient Origins" xmlUrl="https://www.ancient-origins.net/rss.xml" htmlUrl="https://www.ancient-origins.net/"/>
+      <outline type="rss" text="The Debrief" title="The Debrief" xmlUrl="https://thedebrief.org/feed/" htmlUrl="https://thedebrief.org/"/>
+      <outline type="rss" text="Unexplained Mysteries" title="Unexplained Mysteries" xmlUrl="https://www.unexplained-mysteries.com/rss.xml" htmlUrl="https://www.unexplained-mysteries.com/"/>
+      <outline type="rss" text="Mysterious Universe" title="Mysterious Universe" xmlUrl="https://mysteriousuniverse.org/feed/" htmlUrl="https://mysteriousuniverse.org/"/>
+      <outline type="rss" text="The Singular Fortean Society" title="The Singular Fortean Society" xmlUrl="https://www.singularfortean.com/news?format=rss" htmlUrl="https://www.singularfortean.com/"/>
+      <outline type="rss" text="CryptoZooNews" title="CryptoZooNews" xmlUrl="https://www.cryptozoonews.com/feed/" htmlUrl="https://www.cryptozoonews.com/"/>
+    </outline>
+    <outline text="VN - Khoa học Tự nhiên &amp; Công nghệ" title="VN - Khoa học Tự nhiên &amp; Công nghệ">
+      <outline type="rss" text="Tia Sáng - Khoa học &amp; Công nghệ" title="Tia Sáng - Khoa học &amp; Công nghệ" xmlUrl="https://tiasang.com.vn/khoa-hoc-cong-nghe/feed/" htmlUrl="https://tiasang.com.vn/khoa-hoc-cong-nghe/"/>
+      <outline type="rss" text="VnExpress - Khoa học Công nghệ" title="VnExpress - Khoa học Công nghệ" xmlUrl="https://vnexpress.net/rss/khoa-hoc-cong-nghe.rss" htmlUrl="https://vnexpress.net/khoa-hoc-cong-nghe"/>
+      <outline type="rss" text="Tuổi Trẻ - Khoa học" title="Tuổi Trẻ - Khoa học" xmlUrl="https://tuoitre.vn/rss/khoa-hoc.rss" htmlUrl="https://tuoitre.vn/khoa-hoc.htm"/>
+      <outline type="rss" text="Dân Trí - Khoa học Công nghệ" title="Dân Trí - Khoa học Công nghệ" xmlUrl="https://dantri.com.vn/rss/khoa-hoc-cong-nghe.rss" htmlUrl="https://dantri.com.vn/khoa-hoc-cong-nghe.htm"/>
+      <outline type="rss" text="Thanh Niên - Công nghệ &amp; Khoa học" title="Thanh Niên - Công nghệ &amp; Khoa học" xmlUrl="https://thanhnien.vn/rss/cong-nghe.rss" htmlUrl="https://thanhnien.vn/cong-nghe.htm"/>
+      <outline type="rss" text="Hội Thiên văn &amp; Vũ trụ học VN (VACA)" title="Hội Thiên văn &amp; Vũ trụ học VN (VACA)" xmlUrl="https://thienvanvietnam.org/index.php?format=feed&amp;type=rss" htmlUrl="https://thienvanvietnam.org/"/>
+      <outline type="rss" text="GenK - Khám phá" title="GenK - Khám phá" xmlUrl="https://genk.vn/kham-pha.rss" htmlUrl="https://genk.vn/kham-pha.chn"/>
+    </outline>
+    <outline text="VN - Lịch sử &amp; Nghiên cứu" title="VN - Lịch sử &amp; Nghiên cứu">
+      <outline type="rss" text="Nghiên Cứu Lịch Sử" title="Nghiên Cứu Lịch Sử" xmlUrl="https://nghiencuulichsu.com/feed/" htmlUrl="https://nghiencuulichsu.com/"/>
+      <outline type="rss" text="Tia Sáng - Chuyên đề" title="Tia Sáng - Chuyên đề" xmlUrl="https://tiasang.com.vn/chuyen-de/feed/" htmlUrl="https://tiasang.com.vn/chuyen-de/"/>
+    </outline>
+    <outline text="VN - Khoa học Xã hội, Nhân học &amp; Triết học" title="VN - Khoa học Xã hội, Nhân học &amp; Triết học">
+      <outline type="rss" text="Tia Sáng - Văn hóa &amp; Xã hội" title="Tia Sáng - Văn hóa &amp; Xã hội" xmlUrl="https://tiasang.com.vn/van-hoa-xa-hoi/feed/" htmlUrl="https://tiasang.com.vn/van-hoa-xa-hoi/"/>
+      <outline type="rss" text="Tia Sáng - Giáo dục" title="Tia Sáng - Giáo dục" xmlUrl="https://tiasang.com.vn/giao-duc/feed/" htmlUrl="https://tiasang.com.vn/giao-duc/"/>
+      <outline type="rss" text="Book Hunter" title="Book Hunter" xmlUrl="https://bookhunter.vn/feed/" htmlUrl="https://bookhunter.vn/"/>
+      <outline type="rss" text="Znews - Xuất bản &amp; Tri thức" title="Znews - Xuất bản &amp; Tri thức" xmlUrl="https://znews.vn/rss/xuat-ban.rss" htmlUrl="https://znews.vn/xuat-ban.html"/>
+    </outline>
+  </body>
+</opml>

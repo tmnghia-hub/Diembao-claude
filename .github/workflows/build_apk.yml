@@ -4,6 +4,10 @@ name: Build APK
 on:
   push:
     branches: [main]
+    # Sửa trang web không cần build lại APK
+    paths-ignore:
+      - "web/**"
+      - ".github/workflows/site.yml"
   workflow_dispatch:
 
 jobs:
